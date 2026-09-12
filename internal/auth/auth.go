@@ -22,7 +22,6 @@ const (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrSessionNotFound    = errors.New("session not found")
-	ErrUserExists         = errors.New("user already exists")
 	ErrSetupComplete      = errors.New("setup is already complete")
 )
 
@@ -45,8 +44,8 @@ type Session struct {
 }
 
 type Store interface {
-	CountUsers(ctx context.Context) (int, error)
-	CreateUser(ctx context.Context, email, passwordHash, role string) (User, error)
+	SetupRequired(ctx context.Context) (bool, error)
+	CreateFirstUser(ctx context.Context, email, passwordHash, role string) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (User, error)
 	FindUserBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (User, Session, error)
 	CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (Session, error)
@@ -69,15 +68,12 @@ func NewService(store Store) *Service {
 	return &Service{store: store, sessionTTL: DefaultSessionTTL}
 }
 
+func (s *Service) SetupRequired(ctx context.Context) (bool, error) {
+	return s.store.SetupRequired(ctx)
+}
+
 func (s *Service) Setup(ctx context.Context, email, password string) (LoginResult, error) {
-	count, err := s.store.CountUsers(ctx)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if count != 0 {
-		return LoginResult{}, ErrSetupComplete
-	}
-	user, err := s.createUser(ctx, email, password, "admin")
+	user, err := s.createFirstUser(ctx, email, password, "admin")
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -114,7 +110,7 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.store.DeleteSessionByTokenHash(ctx, HashToken(token))
 }
 
-func (s *Service) createUser(ctx context.Context, email, password, role string) (User, error) {
+func (s *Service) createFirstUser(ctx context.Context, email, password, role string) (User, error) {
 	email = normalizeEmail(email)
 	if email == "" {
 		return User{}, fmt.Errorf("email is required")
@@ -126,7 +122,7 @@ func (s *Service) createUser(ctx context.Context, email, password, role string) 
 	if err != nil {
 		return User{}, err
 	}
-	return s.store.CreateUser(ctx, email, string(hash), role)
+	return s.store.CreateFirstUser(ctx, email, string(hash), role)
 }
 
 func (s *Service) createSession(ctx context.Context, user User) (LoginResult, error) {

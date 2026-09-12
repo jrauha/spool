@@ -1,32 +1,54 @@
 package server
 
 import (
+	"context"
+	"embed"
 	"encoding/json"
+	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 
+	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
 )
 
-func New(cfg config.Config, log *slog.Logger) *http.Server {
-	mux := NewMux(log)
+const sessionCookiePath = "/"
+
+//go:embed templates/*.html
+var templateFiles embed.FS
+
+var templates = template.Must(template.ParseFS(templateFiles, "templates/*.html"))
+
+type contextKey string
+
+const userContextKey contextKey = "user"
+
+type App struct {
+	auth *auth.Service
+}
+
+func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service) *http.Server {
 	return &http.Server{
 		Addr:    cfg.Addr,
-		Handler: mux,
+		Handler: NewMux(log, authSvc),
 	}
 }
 
-func NewMux(log *slog.Logger) http.Handler {
+func NewMux(log *slog.Logger, authSvc *auth.Service) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
+	app := &App{auth: authSvc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("Spool\n"))
-	})
+	mux.HandleFunc("GET /setup", app.setupForm)
+	mux.HandleFunc("POST /setup", app.setup)
+	mux.HandleFunc("GET /login", app.loginForm)
+	mux.HandleFunc("POST /login", app.login)
+	mux.HandleFunc("POST /logout", app.logout)
+	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
 
 	return requestLogger(log, mux)
 }
@@ -34,6 +56,160 @@ func NewMux(log *slog.Logger) http.Handler {
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *App) home(w http.ResponseWriter, r *http.Request) {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if a.auth == nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("Spool\n"))
+		return
+	}
+	render(w, "home.html", map[string]string{"Email": user.Email})
+}
+
+func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
+	required, err := a.setupRequired(r)
+	if err != nil {
+		http.Error(w, "setup check failed", http.StatusInternalServerError)
+		return
+	}
+	if !required {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	render(w, "setup.html", nil)
+}
+
+func (a *App) setup(w http.ResponseWriter, r *http.Request) {
+	required, err := a.setupRequired(r)
+	if err != nil {
+		http.Error(w, "setup check failed", http.StatusInternalServerError)
+		return
+	}
+	if !required {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	result, err := a.auth.Setup(r.Context(), r.FormValue("email"), r.FormValue("password"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	setSessionCookie(w, result.Token)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
+	if a.redirectToSetup(w, r) {
+		return
+	}
+	render(w, "login.html", nil)
+}
+
+func (a *App) login(w http.ResponseWriter, r *http.Request) {
+	if a.redirectToSetup(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	result, err := a.auth.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		http.Error(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+	setSessionCookie(w, result.Token)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) logout(w http.ResponseWriter, r *http.Request) {
+	if a.auth != nil {
+		_ = a.auth.Logout(r.Context(), sessionToken(r))
+	}
+	clearSessionCookie(w)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (a *App) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.auth == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		user, _, err := a.auth.AuthenticateToken(r.Context(), sessionToken(r))
+		if err != nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (a *App) redirectToSetup(w http.ResponseWriter, r *http.Request) bool {
+	required, err := a.setupRequired(r)
+	if err != nil {
+		http.Error(w, "setup check failed", http.StatusInternalServerError)
+		return true
+	}
+	if required {
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+		return true
+	}
+	return false
+}
+
+func (a *App) setupRequired(r *http.Request) (bool, error) {
+	if a.auth == nil {
+		return false, nil
+	}
+	return a.auth.SetupRequired(r.Context())
+}
+
+func setSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    token,
+		Path:     sessionCookiePath,
+		MaxAge:   int(auth.DefaultSessionTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName,
+		Path:     sessionCookiePath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func sessionToken(r *http.Request) string {
+	cookie, err := r.Cookie(auth.CookieName)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+func render(w http.ResponseWriter, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.ExecuteTemplate(w, name, data); err != nil {
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

@@ -18,20 +18,20 @@ func TestPostgresStoreUserSessionFlow(t *testing.T) {
 	store := NewPostgresStore(database)
 	ctx := context.Background()
 
-	user, err := store.CreateUser(ctx, testEmail, "hash", "admin")
+	user, err := store.CreateFirstUser(ctx, testEmail, "hash", "admin")
 	if err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
+		t.Fatalf("CreateFirstUser returned error: %v", err)
 	}
 	if user.ID == "" {
 		t.Fatal("user ID is empty")
 	}
 
-	count, err := store.CountUsers(ctx)
+	setupRequired, err := store.SetupRequired(ctx)
 	if err != nil {
-		t.Fatalf("CountUsers returned error: %v", err)
+		t.Fatalf("SetupRequired returned error: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("count = %d, want 1", count)
+	if setupRequired {
+		t.Fatal("setup is still required after user creation")
 	}
 
 	found, err := store.FindUserByEmail(ctx, testEmail)
@@ -84,17 +84,17 @@ func TestPostgresStoreUserSessionFlow(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreDuplicateUser(t *testing.T) {
+func TestPostgresStoreCreateFirstUserRejectsSetupComplete(t *testing.T) {
 	database := openTestDB(t)
 	store := NewPostgresStore(database)
 	ctx := context.Background()
 
-	if _, err := store.CreateUser(ctx, testEmail, "hash", "admin"); err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
+	if _, err := store.CreateFirstUser(ctx, testEmail, "hash", "admin"); err != nil {
+		t.Fatalf("CreateFirstUser returned error: %v", err)
 	}
-	_, err := store.CreateUser(ctx, testEmail, "hash", "admin")
-	if !errors.Is(err, ErrUserExists) {
-		t.Fatalf("CreateUser error = %v, want %v", err, ErrUserExists)
+	_, err := store.CreateFirstUser(ctx, "other@example.com", "hash", "admin")
+	if !errors.Is(err, ErrSetupComplete) {
+		t.Fatalf("CreateFirstUser error = %v, want %v", err, ErrSetupComplete)
 	}
 }
 
@@ -103,9 +103,9 @@ func TestPostgresStoreExpiredSession(t *testing.T) {
 	store := NewPostgresStore(database)
 	ctx := context.Background()
 
-	user, err := store.CreateUser(ctx, testEmail, "hash", "admin")
+	user, err := store.CreateFirstUser(ctx, testEmail, "hash", "admin")
 	if err != nil {
-		t.Fatalf("CreateUser returned error: %v", err)
+		t.Fatalf("CreateFirstUser returned error: %v", err)
 	}
 	_, err = store.CreateSession(ctx, user.ID, "expired-token", time.Now().UTC().Add(-time.Hour))
 	if err != nil {

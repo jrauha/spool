@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,6 +158,7 @@ func TestLogoutDeletesSession(t *testing.T) {
 }
 
 type fakeStore struct {
+	mu           sync.Mutex
 	usersByEmail map[string]User
 	sessions     map[string]Session
 	nextID       int
@@ -169,14 +171,20 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (s *fakeStore) CountUsers(ctx context.Context) (int, error) {
-	return len(s.usersByEmail), nil
+func (s *fakeStore) SetupRequired(ctx context.Context) (bool, error) {
+	return len(s.usersByEmail) == 0, nil
 }
 
-func (s *fakeStore) CreateUser(ctx context.Context, email, passwordHash, role string) (User, error) {
-	if _, ok := s.usersByEmail[email]; ok {
-		return User{}, ErrUserExists
+func (s *fakeStore) CreateFirstUser(ctx context.Context, email, passwordHash, role string) (User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.usersByEmail) != 0 {
+		return User{}, ErrSetupComplete
 	}
+	return s.createUser(email, passwordHash, role)
+}
+
+func (s *fakeStore) createUser(email, passwordHash, role string) (User, error) {
 	now := time.Now().UTC()
 	user := User{
 		ID:           s.id(),

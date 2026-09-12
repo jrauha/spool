@@ -5,11 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/lib/pq"
 )
-
-const postgresUniqueViolation = "23505"
 
 type PostgresStore struct {
 	db *sql.DB
@@ -19,23 +15,37 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-func (s *PostgresStore) CountUsers(ctx context.Context) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&count)
-	return count, err
+func (s *PostgresStore) SetupRequired(ctx context.Context) (bool, error) {
+	var required bool
+	err := s.db.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&required)
+	return required, err
 }
 
-func (s *PostgresStore) CreateUser(ctx context.Context, email, passwordHash, role string) (User, error) {
+func (s *PostgresStore) CreateFirstUser(ctx context.Context, email, passwordHash, role string) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE users IN EXCLUSIVE MODE`); err != nil {
+		return User{}, err
+	}
+
 	var user User
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO users (email, password_hash, role)
-		VALUES ($1, $2, $3)
+		SELECT $1, $2, $3
+		WHERE NOT EXISTS (SELECT 1 FROM users)
 		RETURNING id::text, email, password_hash, role, created_at, updated_at
 	`, email, passwordHash, role).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Role, &user.CreatedAt, &user.UpdatedAt)
-	if isUniqueViolation(err) {
-		return User{}, ErrUserExists
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrSetupComplete
 	}
-	return user, err
+	if err != nil {
+		return User{}, err
+	}
+	return user, tx.Commit()
 }
 
 func (s *PostgresStore) FindUserByEmail(ctx context.Context, email string) (User, error) {
@@ -89,9 +99,4 @@ func (s *PostgresStore) DeleteSessionByTokenHash(ctx context.Context, tokenHash 
 func (s *PostgresStore) TouchSession(ctx context.Context, id string, seenAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = $2 WHERE id = $1`, id, seenAt)
 	return err
-}
-
-func isUniqueViolation(err error) bool {
-	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr.Code == postgresUniqueViolation
 }
