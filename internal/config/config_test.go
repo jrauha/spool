@@ -13,11 +13,15 @@ func TestFromEnvUsesDefaults(t *testing.T) {
 	if cfg.SpoolHome != DefaultSpoolHome {
 		t.Fatalf("SpoolHome = %q, want %q", cfg.SpoolHome, DefaultSpoolHome)
 	}
+	if cfg.DatabaseURL != "" {
+		t.Fatalf("DatabaseURL = %q, want empty", cfg.DatabaseURL)
+	}
 }
 
 func TestFromEnvUsesOverrides(t *testing.T) {
 	t.Setenv("SPOOL_ADDR", ":9090")
 	t.Setenv("SPOOL_HOME", "/var/lib/spool")
+	t.Setenv("SPOOL_DATABASE_URL", "postgres://spool:spool@localhost/spool?sslmode=disable")
 
 	cfg := FromEnv()
 	if cfg.Addr != ":9090" {
@@ -25,5 +29,8 @@ func TestFromEnvUsesOverrides(t *testing.T) {
 	}
 	if cfg.SpoolHome != "/var/lib/spool" {
 		t.Fatalf("SpoolHome = %q, want /var/lib/spool", cfg.SpoolHome)
+	}
+	if cfg.DatabaseURL != "postgres://spool:spool@localhost/spool?sslmode=disable" {
+		t.Fatalf("DatabaseURL = %q, want override", cfg.DatabaseURL)
 	}
 }

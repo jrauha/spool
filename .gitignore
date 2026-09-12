@@ -4,6 +4,7 @@
 
 # Local runtime state
 .spool/
+.env
 
 # Go test/cache artifacts
 *.test

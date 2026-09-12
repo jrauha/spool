@@ -8,14 +8,16 @@ const (
 )
 
 type Config struct {
-	Addr      string
-	SpoolHome string
+	Addr        string
+	SpoolHome   string
+	DatabaseURL string
 }
 
 func FromEnv() Config {
 	return Config{
-		Addr:      envOrDefault("SPOOL_ADDR", DefaultAddr),
-		SpoolHome: envOrDefault("SPOOL_HOME", DefaultSpoolHome),
+		Addr:        envOrDefault("SPOOL_ADDR", DefaultAddr),
+		SpoolHome:   envOrDefault("SPOOL_HOME", DefaultSpoolHome),
+		DatabaseURL: os.Getenv("SPOOL_DATABASE_URL"),
 	}
 }
 
