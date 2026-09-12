@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
+
+const postgresUniqueViolation = "23505"
 
 type PostgresStore struct {
 	db *sql.DB
@@ -89,5 +92,6 @@ func (s *PostgresStore) TouchSession(ctx context.Context, id string, seenAt time
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "SQLSTATE 23505")
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == postgresUniqueViolation
 }
