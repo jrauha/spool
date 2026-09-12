@@ -2,4 +2,7 @@
 <title>Spool</title>
 <h1>Spool</h1>
 <p>Signed in as {{.Email}}</p>
-<form method="post" action="/logout"><button>Log out</button></form>
+<form method="post" action="/logout">
+  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+  <button>Log out</button>
+</form>

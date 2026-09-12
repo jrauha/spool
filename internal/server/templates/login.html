@@ -2,6 +2,7 @@
 <title>Log in</title>
 <h1>Log in</h1>
 <form method="post" action="/login">
+  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
   <label>Email <input name="email" type="email" required></label>
   <label>Password <input name="password" type="password" required></label>
   <button>Log in</button>

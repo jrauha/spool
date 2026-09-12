@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,11 @@ import (
 	"github.com/spool-reader/spool/internal/config"
 )
 
-const sessionCookiePath = "/"
+const (
+	sessionCookiePath = "/"
+	csrfCookieName    = "spool_csrf"
+	csrfFormField     = "csrf_token"
+)
 
 //go:embed templates/*.html
 var templateFiles embed.FS
@@ -26,6 +31,11 @@ const userContextKey contextKey = "user"
 
 type App struct {
 	auth *auth.Service
+}
+
+type pageData struct {
+	CSRFToken string
+	Email     string
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service) *http.Server {
@@ -65,7 +75,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Spool\n"))
 		return
 	}
-	render(w, "home.html", map[string]string{"Email": user.Email})
+	a.renderPage(w, r, "home.html", pageData{Email: user.Email})
 }
 
 func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +88,7 @@ func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	render(w, "setup.html", nil)
+	a.renderPage(w, r, "setup.html", pageData{})
 }
 
 func (a *App) setup(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +105,10 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
+	if !validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
 	result, err := a.auth.Setup(r.Context(), r.FormValue("email"), r.FormValue("password"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -108,7 +122,7 @@ func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
 	if a.redirectToSetup(w, r) {
 		return
 	}
-	render(w, "login.html", nil)
+	a.renderPage(w, r, "login.html", pageData{})
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +131,10 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if !validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
 	result, err := a.auth.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
@@ -133,6 +151,14 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if !validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
 	if a.auth != nil {
 		_ = a.auth.Logout(r.Context(), sessionToken(r))
 	}
@@ -203,6 +229,45 @@ func sessionToken(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
+}
+
+func (a *App) renderPage(w http.ResponseWriter, r *http.Request, name string, data pageData) {
+	token, err := ensureCSRFToken(w, r)
+	if err != nil {
+		http.Error(w, "CSRF token failed", http.StatusInternalServerError)
+		return
+	}
+	data.CSRFToken = token
+	render(w, name, data)
+}
+
+func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
+	if cookie, err := r.Cookie(csrfCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
+
+	token, err := auth.GenerateToken()
+	if err != nil {
+		return "", err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     sessionCookiePath,
+		MaxAge:   int(auth.DefaultSessionTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return token, nil
+}
+
+func validCSRF(r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil {
+		return false
+	}
+	formToken := r.FormValue(csrfFormField)
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(formToken)) == 1
 }
 
 func render(w http.ResponseWriter, name string, data any) {

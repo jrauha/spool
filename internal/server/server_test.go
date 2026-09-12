@@ -93,9 +93,23 @@ func TestSetupCheckFailureReturnsServerError(t *testing.T) {
 	}
 }
 
+func TestSetupRejectsMissingCSRF(t *testing.T) {
+	req := formRequest(http.MethodPost, "/setup", url.Values{
+		"email":    {testEmail},
+		"password": {testPass},
+	})
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, auth.NewService(newServerAuthStore())).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
 func TestSetupCreatesSession(t *testing.T) {
 	store := newServerAuthStore()
-	req := formRequest(http.MethodPost, "/setup", url.Values{
+	req := csrfFormRequest(http.MethodPost, "/setup", url.Values{
 		"email":    {testEmail},
 		"password": {testPass},
 	})
@@ -118,7 +132,7 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 		t.Fatalf("Setup returned error: %v", err)
 	}
 
-	req := formRequest(http.MethodPost, "/login", url.Values{
+	req := csrfFormRequest(http.MethodPost, "/login", url.Values{
 		"email":    {testEmail},
 		"password": {"wrong-password"},
 	})
@@ -158,7 +172,7 @@ func TestLoginAndLogout(t *testing.T) {
 		t.Fatalf("Setup returned error: %v", err)
 	}
 
-	loginReq := formRequest(http.MethodPost, "/login", url.Values{
+	loginReq := csrfFormRequest(http.MethodPost, "/login", url.Values{
 		"email":    {testEmail},
 		"password": {testPass},
 	})
@@ -173,7 +187,7 @@ func TestLoginAndLogout(t *testing.T) {
 		t.Fatal("session cookie was not set")
 	}
 
-	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	logoutReq := csrfFormRequest(http.MethodPost, "/logout", nil)
 	logoutReq.AddCookie(cookies[0])
 	logoutRec := httptest.NewRecorder()
 	NewMux(nil, svc).ServeHTTP(logoutRec, logoutReq)
@@ -197,6 +211,18 @@ func TestLoginAndLogout(t *testing.T) {
 func formRequest(method, path string, form url.Values) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
+}
+
+func csrfFormRequest(method, path string, form url.Values) *http.Request {
+	const token = "csrf-token"
+
+	if form == nil {
+		form = make(url.Values)
+	}
+	form.Set(csrfFormField, token)
+	req := formRequest(method, path, form)
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token})
 	return req
 }
 

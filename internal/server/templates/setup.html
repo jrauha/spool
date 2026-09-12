@@ -2,6 +2,7 @@
 <title>Set up Spool</title>
 <h1>Set up Spool</h1>
 <form method="post" action="/setup">
+  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
   <label>Email <input name="email" type="email" required></label>
   <label>Password <input name="password" type="password" required></label>
   <button>Set up</button>
