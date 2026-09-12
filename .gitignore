@@ -1,0 +1,10 @@
+# Build outputs
+/bin/
+/dist/
+
+# Local runtime state
+.spool/
+
+# Go test/cache artifacts
+*.test
+coverage.out
