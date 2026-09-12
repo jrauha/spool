@@ -29,3 +29,5 @@ For local development, Spool also loads a `.env` file from the current directory
 ```env
 SPOOL_DATABASE_URL=postgres://spool:spool@localhost:5432/spool?sslmode=disable
 ```
+
+Set `SPOOL_TEST_DATABASE_URL` to run Postgres integration tests.
