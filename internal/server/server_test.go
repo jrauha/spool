@@ -21,6 +21,16 @@ const (
 	testPass  = "password123"
 )
 
+func TestFormatDate(t *testing.T) {
+	date := time.Date(2026, time.September, 13, 0, 0, 0, 0, time.UTC)
+	if got := formatDate(&date); got != "Sep 13, 2026" {
+		t.Fatalf("formatDate = %q", got)
+	}
+	if got := formatDate(nil); got != "" {
+		t.Fatalf("formatDate(nil) = %q", got)
+	}
+}
+
 func TestPageNumber(t *testing.T) {
 	for _, test := range []struct {
 		path string

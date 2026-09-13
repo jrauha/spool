@@ -23,6 +23,7 @@
     <ul class="item-list">
     {{range .Items}}
       <li class="item-row">
+        {{with .PublishedAt}}<p class="item-source">{{formatDate .}}</p>{{end}}
         <a class="item-title" href="{{.URL}}">{{.Title}}</a>
         {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
       </li>

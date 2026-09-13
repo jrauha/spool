@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/spool-reader/spool/internal/auth"
@@ -33,7 +34,8 @@ var appCSS []byte
 var richTextPolicy = bluemonday.UGCPolicy()
 
 var templates = template.Must(template.New("").Funcs(template.FuncMap{
-	"richText": richText,
+	"formatDate": formatDate,
+	"richText":   richText,
 }).ParseFS(templateFiles, "templates/*.html"))
 
 type contextKey string
@@ -92,6 +94,13 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
 	return requestLogger(log, mux)
+}
+
+func formatDate(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.Format("Jan 2, 2006")
 }
 
 func richText(value string) template.HTML {
