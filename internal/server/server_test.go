@@ -87,6 +87,20 @@ func TestHomeRedirectsToLogin(t *testing.T) {
 	}
 }
 
+func TestFeedsRedirectsToLogin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/feeds", nil)
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, auth.NewService(newServerAuthStore()), nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if got := rec.Header().Get("Location"); got != "/login" {
+		t.Fatalf("location = %q, want /login", got)
+	}
+}
+
 func TestLoginRedirectsToSetup(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()

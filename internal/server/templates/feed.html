@@ -7,33 +7,29 @@
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-<div class="shell">
-  <header class="topbar">
+<div class="app-shell">
+  <header class="site-header">
     <a class="brand" href="/">Spool</a>
-    <nav class="nav"><a href="/">latest</a><a href="/">feeds</a></nav>
-    <span class="account">{{.Email}}</span>
+    <nav aria-label="Main navigation"><a href="/">Reading</a><a href="/feeds">Feeds</a></nav>
+    <div class="account">{{.Email}}</div>
   </header>
-  <main>
-    <h1>{{.Feed.Title}}</h1>
-    {{if .Feed.Description}}<div class="item-summary">{{richText .Feed.Description}}</div>{{end}}
-    {{if .Feed.SiteURL}}<p class="muted"><a href="{{.Feed.SiteURL}}">Visit site</a></p>{{end}}
-    {{if .Feed.LastError}}<p class="notice">Last refresh failed: {{.Feed.LastError}}</p>{{end}}
-    <form class="inline" method="post" action="/feeds/{{.Feed.ID}}/refresh">
-      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-      <button>Refresh</button>
-    </form>
-
-    <h2>Items</h2>
-    <ol class="item-list">
+  <main class="reading-column">
+    <header class="page-heading feed-heading">
+      <div><p class="eyebrow"><a href="/feeds">Feeds</a></p><h1>{{.Feed.Title}}</h1>{{if .Feed.Description}}<div class="feed-description">{{richText .Feed.Description}}</div>{{end}}{{if .Feed.SiteURL}}<p><a href="{{.Feed.SiteURL}}">Visit site</a></p>{{end}}</div>
+      <form method="post" action="/feeds/{{.Feed.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Refresh</button></form>
+    </header>
+    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    {{if .Feed.LastError}}<p class="notice notice-error">Last refresh failed: {{.Feed.LastError}}</p>{{end}}
+    <ul class="item-list">
     {{range .Items}}
-      <li>
+      <li class="item-row">
         <a class="item-title" href="{{.URL}}">{{.Title}}</a>
         {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
       </li>
     {{else}}
-      <li class="empty">No items yet.</li>
+      <li class="empty-state">No items yet.</li>
     {{end}}
-    </ol>
+    </ul>
   </main>
 </div>
 </body>

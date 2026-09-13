@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Feeds · Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="app-shell">
+  <header class="site-header">
+    <a class="brand" href="/">Spool</a>
+    <nav aria-label="Main navigation"><a href="/">Reading</a><a aria-current="page" href="/feeds">Feeds</a></nav>
+    <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
+  </header>
+  <main class="content-column">
+    <header class="page-heading"><h1>Feeds</h1><p>Manage the sources in your reading list.</p></header>
+    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    <form class="add-feed" method="post" action="/feeds">
+      <label for="feed-url">Feed URL</label>
+      <div><input id="feed-url" name="url" type="url" placeholder="https://example.com/feed.xml" required><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Add feed</button></div>
+    </form>
+    <ul class="feed-list">
+    {{range .Feeds}}
+      <li class="feed-row">
+        <div><a class="feed-title" href="/feeds/{{.ID}}">{{.Title}}</a>{{if .Description}}<p class="feed-description">{{.Description}}</p>{{end}}{{if .LastError}}<p class="feed-error">Last refresh failed: {{.LastError}}</p>{{end}}</div>
+        <form method="post" action="/feeds/{{.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Refresh</button></form>
+      </li>
+    {{else}}
+      <li class="empty-state">No feeds yet.</li>
+    {{end}}
+    </ul>
+  </main>
+</div>
+</body>
+</html>

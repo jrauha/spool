@@ -49,8 +49,10 @@ type App struct {
 type pageData struct {
 	CSRFToken string
 	Email     string
+	Notice    string
 	Feed      *core.Feed
 	Feeds     []core.Feed
+	FeedNames map[string]string
 	Items     []core.Item
 }
 
@@ -76,6 +78,7 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.HandleFunc("POST /login", app.login)
 	mux.HandleFunc("POST /logout", app.logout)
 	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
+	mux.Handle("GET /feeds", app.requireAuth(http.HandlerFunc(app.feedList)))
 	mux.Handle("GET /feeds/{id}", app.requireAuth(http.HandlerFunc(app.feedDetail)))
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
@@ -92,6 +95,25 @@ func stylesheet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(appCSS)
 }
 
+func pageNotice(r *http.Request) string {
+	switch r.URL.Query().Get("notice") {
+	case "added":
+		return "Feed added. Its first refresh is queued."
+	case "queued":
+		return "Refresh queued."
+	default:
+		return ""
+	}
+}
+
+func feedNames(feeds []core.Feed) map[string]string {
+	names := make(map[string]string, len(feeds))
+	for _, feed := range feeds {
+		names[feed.ID] = feed.Title
+	}
+	return names
+}
+
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -104,7 +126,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Spool\n"))
 		return
 	}
-	data := pageData{Email: user.Email}
+	data := pageData{Email: user.Email, Notice: pageNotice(r)}
 	if a.feeds != nil {
 		var err error
 		data.Feeds, err = a.feeds.ListFeeds(r.Context())
@@ -118,7 +140,22 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	data.FeedNames = feedNames(data.Feeds)
 	a.renderPage(w, r, "home.html", data)
+}
+
+func (a *App) feedList(w http.ResponseWriter, r *http.Request) {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	data := pageData{Email: user.Email, Notice: pageNotice(r)}
+	if a.feeds != nil {
+		var err error
+		data.Feeds, err = a.feeds.ListFeeds(r.Context())
+		if err != nil {
+			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	a.renderPage(w, r, "feeds.html", data)
 }
 
 func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +178,7 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := r.Context().Value(userContextKey).(auth.User)
-	a.renderPage(w, r, "feed.html", pageData{Email: user.Email, Feed: &feed, Items: items})
+	a.renderPage(w, r, "feed.html", pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Items: items})
 }
 
 func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +193,7 @@ func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed add failed", http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/feeds?notice=added", http.StatusSeeOther)
 }
 
 func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +212,7 @@ func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed refresh failed", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/feeds/"+r.PathValue("id")+"?notice=queued", http.StatusSeeOther)
 }
 
 func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
