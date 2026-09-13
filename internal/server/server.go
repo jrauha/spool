@@ -21,9 +21,14 @@ import (
 )
 
 const (
-	sessionCookiePath = "/"
-	csrfCookieName    = "spool_csrf"
-	csrfFormField     = "csrf_token"
+	sessionCookiePath   = "/"
+	csrfCookieName      = "spool_csrf"
+	csrfFormField       = "csrf_token"
+	maxFormBytes        = 1 << 20
+	serverReadTimeout   = 15 * time.Second
+	serverWriteTimeout  = 30 * time.Second
+	serverIdleTimeout   = 60 * time.Second
+	serverHeaderTimeout = 5 * time.Second
 )
 
 //go:embed templates/*.html
@@ -49,8 +54,9 @@ const (
 )
 
 type App struct {
-	auth  *auth.Service
-	feeds *feed.Service
+	auth         *auth.Service
+	feeds        *feed.Service
+	cookieSecure bool
 }
 
 type pageData struct {
@@ -70,17 +76,25 @@ type pageData struct {
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) *http.Server {
 	return &http.Server{
-		Addr:    cfg.Addr,
-		Handler: NewMux(log, authSvc, feedSvc),
+		Addr:              cfg.Addr,
+		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure),
+		ReadTimeout:       serverReadTimeout,
+		ReadHeaderTimeout: serverHeaderTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 	}
 }
 
 func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http.Handler {
+	return newMux(log, authSvc, feedSvc, false)
+}
+
+func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc, feeds: feedSvc}
+	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /assets/app.css", stylesheet)
@@ -95,7 +109,7 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
-	return requestLogger(log, mux)
+	return securityHeaders(requestLogger(log, mux))
 }
 
 func formatDate(value *time.Time) string {
@@ -317,7 +331,7 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	setSessionCookie(w, result.Token)
+	setSessionCookie(w, result.Token, a.cookieSecure)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -344,7 +358,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login failed", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, result.Token)
+	setSessionCookie(w, result.Token, a.cookieSecure)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -355,7 +369,7 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	if a.auth != nil {
 		_ = a.auth.Logout(r.Context(), sessionToken(r))
 	}
-	clearSessionCookie(w)
+	clearSessionCookie(w, a.cookieSecure)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -395,23 +409,25 @@ func (a *App) setupRequired(r *http.Request) (bool, error) {
 	return a.auth.SetupRequired(r.Context())
 }
 
-func setSessionCookie(w http.ResponseWriter, token string) {
+func setSessionCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.CookieName,
 		Value:    token,
 		Path:     sessionCookiePath,
 		MaxAge:   int(auth.DefaultSessionTTL.Seconds()),
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
+func clearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.CookieName,
 		Path:     sessionCookiePath,
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -425,7 +441,7 @@ func sessionToken(r *http.Request) string {
 }
 
 func (a *App) renderPage(w http.ResponseWriter, r *http.Request, name string, data pageData) {
-	token, err := ensureCSRFToken(w, r)
+	token, err := a.ensureCSRFToken(w, r)
 	if err != nil {
 		http.Error(w, "CSRF token failed", http.StatusInternalServerError)
 		return
@@ -434,7 +450,7 @@ func (a *App) renderPage(w http.ResponseWriter, r *http.Request, name string, da
 	render(w, name, data)
 }
 
-func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
+func (a *App) ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
 	if cookie, err := r.Cookie(csrfCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value, nil
 	}
@@ -449,12 +465,14 @@ func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
 		Path:     sessionCookiePath,
 		MaxAge:   int(auth.DefaultSessionTTL.Seconds()),
 		HttpOnly: true,
+		Secure:   a.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 	return token, nil
 }
 
 func (a *App) parseCSRFForm(w http.ResponseWriter, r *http.Request) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return false
@@ -480,6 +498,17 @@ func render(w http.ResponseWriter, name string, data any) {
 	if err := templates.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' http: https: data:; object-src 'none'; style-src 'self'")
+		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requestLogger(log *slog.Logger, next http.Handler) http.Handler {

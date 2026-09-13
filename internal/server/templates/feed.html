@@ -15,7 +15,7 @@
   </header>
   <main id="spool-main" class="reading-column" data-ui-region="feed-items" data-entity="feed" data-feed-id="{{.Feed.ID}}">
     <header class="page-heading feed-heading" data-ui-region="page-header">
-      <div><p class="eyebrow"><a href="/feeds">Feeds</a></p><h1>{{if .Feed.IconURL}}<img class="feed-icon" src="{{.Feed.IconURL}}" alt="" onerror="this.remove()">{{end}}{{.Feed.Title}}</h1>{{if .Feed.Description}}<div class="feed-description">{{richText .Feed.Description}}</div>{{end}}<p>{{if .Feed.SiteURL}}<a href="{{.Feed.SiteURL}}">Visit site</a> · {{end}}<a href="{{.Feed.URL}}">RSS feed</a></p></div>
+      <div><p class="eyebrow"><a href="/feeds">Feeds</a></p><h1>{{if .Feed.IconURL}}<img class="feed-icon" src="{{.Feed.IconURL}}" alt="">{{end}}{{.Feed.Title}}</h1>{{if .Feed.Description}}<div class="feed-description">{{richText .Feed.Description}}</div>{{end}}<p>{{if .Feed.SiteURL}}<a href="{{.Feed.SiteURL}}">Visit site</a> · {{end}}<a href="{{.Feed.URL}}">RSS feed</a></p></div>
       <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.Feed.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Refresh</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
     </header>
     <div class="plugin-slot plugin-slot--feed-metadata" data-plugin-slot="feed.metadata"></div>

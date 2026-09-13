@@ -20,7 +20,7 @@
     <ul class="item-list">
     {{range .Items}}
       <li id="item-{{.ID}}" class="item-row" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
-        <p class="item-source" data-ui-region="item-source">{{with index $.FeedIcons .FeedID}}<img class="feed-icon" src="{{.}}" alt="" onerror="this.remove()">{{end}}<a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
+        <p class="item-source" data-ui-region="item-source">{{with index $.FeedIcons .FeedID}}<img class="feed-icon" src="{{.}}" alt="">{{end}}<a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
         <a class="item-title" data-ui-region="item-title" href="{{.URL}}">{{.Title}}</a>
         {{if .Summary}}<div class="item-summary" data-ui-region="item-summary">{{richText .Summary}}</div>{{end}}
         <div class="plugin-slot plugin-slot--item-metadata" data-plugin-slot="item.metadata"></div>

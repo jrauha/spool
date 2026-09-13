@@ -108,6 +108,12 @@ func TestHealthz(t *testing.T) {
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"status":"ok"}` {
 		t.Fatalf("body = %q, want health response", got)
 	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q", got)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
+		t.Fatal("Content-Security-Policy is empty")
+	}
 }
 
 func TestHome(t *testing.T) {
@@ -266,7 +272,7 @@ func TestLoginAndLogout(t *testing.T) {
 		"password": {testPass},
 	})
 	loginRec := httptest.NewRecorder()
-	NewMux(nil, svc, nil).ServeHTTP(loginRec, loginReq)
+	newMux(nil, svc, nil, true).ServeHTTP(loginRec, loginReq)
 
 	if loginRec.Code != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d", loginRec.Code, http.StatusSeeOther)
@@ -274,6 +280,9 @@ func TestLoginAndLogout(t *testing.T) {
 	cookies := loginRec.Result().Cookies()
 	if len(cookies) == 0 {
 		t.Fatal("session cookie was not set")
+	}
+	if !cookies[0].Secure {
+		t.Fatal("session cookie is not secure")
 	}
 
 	logoutReq := csrfFormRequest(http.MethodPost, "/logout", nil)
