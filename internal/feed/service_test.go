@@ -6,27 +6,35 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/spool-reader/spool/internal/core"
 )
 
-func TestAddCreatesFeedAndRefreshesIt(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`<rss><channel><title>Example</title></channel></rss>`))
-	}))
-	defer server.Close()
-
+func TestAddCreatesFeedAndQueuesRefresh(t *testing.T) {
 	store := &refreshStore{}
-	svc := NewService(store, server.Client())
-	feed, err := svc.Add(context.Background(), server.URL)
+	svc := NewService(store, nil)
+	feed, err := svc.Add(context.Background(), "https://example.com/feed.xml")
 	if err != nil {
 		t.Fatalf("Add returned error: %v", err)
 	}
-	if feed.ID == "" || store.feed.Title != "Example" {
+	if feed.ID == "" || store.queuedFeedID != feed.ID {
 		t.Fatalf("feed = %#v", store.feed)
 	}
-	if len(store.events) != 2 {
+	if len(store.events) != 1 {
 		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestQueueRefresh(t *testing.T) {
+	store := &refreshStore{feed: core.Feed{ID: "feed-1"}}
+	svc := NewService(store, nil)
+
+	if err := svc.QueueRefresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("QueueRefresh returned error: %v", err)
+	}
+	if store.queuedFeedID != store.feed.ID {
+		t.Fatalf("queued feed ID = %q, want %q", store.queuedFeedID, store.feed.ID)
 	}
 }
 
@@ -57,9 +65,10 @@ func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 }
 
 type refreshStore struct {
-	feed   core.Feed
-	items  []core.Item
-	events []core.Event
+	feed         core.Feed
+	items        []core.Item
+	events       []core.Event
+	queuedFeedID string
 }
 
 func (s *refreshStore) CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {
@@ -82,6 +91,11 @@ func (s *refreshStore) ListItems(ctx context.Context, feedID string) ([]core.Ite
 
 func (s *refreshStore) ListLatestItems(ctx context.Context, limit int) ([]core.Item, error) {
 	return s.items, nil
+}
+
+func (s *refreshStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
+	s.queuedFeedID = feedID
+	return nil
 }
 
 func (s *refreshStore) UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {

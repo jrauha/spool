@@ -23,6 +23,7 @@ type Store interface {
 	ListFeeds(ctx context.Context) ([]core.Feed, error)
 	ListItems(ctx context.Context, feedID string) ([]core.Item, error)
 	ListLatestItems(ctx context.Context, limit int) ([]core.Item, error)
+	EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
 	AppendEvent(ctx context.Context, event core.Event) (core.Event, error)
@@ -56,6 +57,13 @@ func (s *Service) Items(ctx context.Context, feedID string) ([]core.Item, error)
 	return s.store.ListItems(ctx, feedID)
 }
 
+func (s *Service) QueueRefresh(ctx context.Context, id string) error {
+	if _, err := s.store.FindFeed(ctx, id); err != nil {
+		return err
+	}
+	return s.store.EnqueueRefresh(ctx, id, time.Now().UTC())
+}
+
 func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {
 	parsedURL, err := url.ParseRequestURI(rawURL)
 	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
@@ -69,10 +77,10 @@ func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {
 	if err := s.appendEvent(ctx, core.EventFeedAdded, "feed", feed.ID); err != nil {
 		return core.Feed{}, err
 	}
-	if err := s.Refresh(ctx, feed.ID); err != nil {
-		return feed, err
+	if err := s.store.EnqueueRefresh(ctx, feed.ID, time.Now().UTC()); err != nil {
+		return core.Feed{}, err
 	}
-	return s.store.FindFeed(ctx, feed.ID)
+	return feed, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) error {

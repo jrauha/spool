@@ -149,8 +149,12 @@ func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
 	if !a.parseCSRFForm(w, r) {
 		return
 	}
-	if err := a.feeds.Refresh(r.Context(), r.PathValue("id")); err != nil {
-		http.Error(w, "feed refresh failed", http.StatusBadGateway)
+	if err := a.feeds.QueueRefresh(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrFeedNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "feed refresh failed", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
