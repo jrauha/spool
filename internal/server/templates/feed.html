@@ -15,7 +15,7 @@
   </header>
   <main>
     <h1>{{.Feed.Title}}</h1>
-    {{if .Feed.Description}}<p>{{.Feed.Description}}</p>{{end}}
+    {{if .Feed.Description}}<div class="item-summary">{{richText .Feed.Description}}</div>{{end}}
     {{if .Feed.SiteURL}}<p class="muted"><a href="{{.Feed.SiteURL}}">Visit site</a></p>{{end}}
     {{if .Feed.LastError}}<p class="notice">Last refresh failed: {{.Feed.LastError}}</p>{{end}}
     <form class="inline" method="post" action="/feeds/{{.Feed.ID}}/refresh">
@@ -28,7 +28,7 @@
     {{range .Items}}
       <li>
         <a class="item-title" href="{{.URL}}">{{.Title}}</a>
-        {{if .Summary}}<p class="item-summary">{{.Summary}}</p>{{end}}
+        {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
       </li>
     {{else}}
       <li class="empty">No items yet.</li>

@@ -1,7 +1,7 @@
 :root {
-  color: #000;
-  background: #f6f6ef;
-  font: 13px Verdana, Geneva, sans-serif;
+  color: #1b2733;
+  background: #edf2f7;
+  font: 14px system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -13,8 +13,10 @@ a:hover { text-decoration: underline; }
 
 .shell {
   width: min(1100px, 96%);
-  margin: 8px auto;
-  background: #f6f6ef;
+  margin: 12px auto;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
 }
 
 .topbar {
@@ -23,10 +25,12 @@ a:hover { text-decoration: underline; }
   gap: 10px;
   min-height: 32px;
   padding: 5px 8px;
-  background: #ff6600;
+  background: #1f4b70;
+  color: #fff;
 }
 
 .brand { font-weight: bold; }
+.topbar a { color: #fff; }
 .nav { display: flex; gap: 8px; font-size: 11px; }
 .account { margin-left: auto; font-size: 11px; }
 .inline { display: inline; }

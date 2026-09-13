@@ -21,6 +21,16 @@ const (
 	testPass  = "password123"
 )
 
+func TestRichTextSanitizesContent(t *testing.T) {
+	got := string(richText(`<p>Read <a href="https://example.com">more</a>.</p><script>alert(1)</script>`))
+	if !strings.Contains(got, `<a href="https://example.com"`) {
+		t.Fatalf("rich text = %q, want link", got)
+	}
+	if strings.Contains(got, "script") {
+		t.Fatalf("rich text = %q, contains script", got)
+	}
+}
+
 func TestStylesheet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	rec := httptest.NewRecorder()

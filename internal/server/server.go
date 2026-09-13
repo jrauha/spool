@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
 	"github.com/spool-reader/spool/internal/core"
@@ -28,7 +29,11 @@ var templateFiles embed.FS
 //go:embed assets/app.css
 var appCSS []byte
 
-var templates = template.Must(template.ParseFS(templateFiles, "templates/*.html"))
+var richTextPolicy = bluemonday.UGCPolicy()
+
+var templates = template.Must(template.New("").Funcs(template.FuncMap{
+	"richText": richText,
+}).ParseFS(templateFiles, "templates/*.html"))
 
 type contextKey string
 
@@ -76,6 +81,10 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
 	return requestLogger(log, mux)
+}
+
+func richText(value string) template.HTML {
+	return template.HTML(richTextPolicy.Sanitize(value))
 }
 
 func stylesheet(w http.ResponseWriter, r *http.Request) {

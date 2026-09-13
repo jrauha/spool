@@ -19,7 +19,7 @@
     {{range .Items}}
       <li>
         <a class="item-title" href="{{.URL}}">{{.Title}}</a>
-        {{if .Summary}}<p class="item-summary">{{.Summary}}</p>{{end}}
+        {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
       </li>
     {{else}}
       <li class="empty">No items yet. Add a feed or wait for a refresh.</li>
