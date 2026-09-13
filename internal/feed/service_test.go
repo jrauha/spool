@@ -89,7 +89,7 @@ func (s *refreshStore) ListItems(ctx context.Context, feedID string) ([]core.Ite
 	return s.items, nil
 }
 
-func (s *refreshStore) ListLatestItems(ctx context.Context, limit int) ([]core.Item, error) {
+func (s *refreshStore) ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error) {
 	return s.items, nil
 }
 

@@ -21,6 +21,23 @@ const (
 	testPass  = "password123"
 )
 
+func TestPageNumber(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want int
+	}{
+		{path: "/", want: 1},
+		{path: "/?page=2", want: 2},
+		{path: "/?page=0", want: 1},
+		{path: "/?page=invalid", want: 1},
+	} {
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		if got := pageNumber(req); got != test.want {
+			t.Fatalf("pageNumber(%q) = %d, want %d", test.path, got, test.want)
+		}
+	}
+}
+
 func TestRichTextSanitizesContent(t *testing.T) {
 	got := string(richText(`<p>Read <a href="https://example.com">more</a>.</p><script>alert(1)</script>`))
 	if !strings.Contains(got, `<a href="https://example.com"`) {

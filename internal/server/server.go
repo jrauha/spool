@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/spool-reader/spool/internal/auth"
@@ -39,7 +40,10 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-const latestItemLimit = 50
+const (
+	latestItemLimit = 50
+	firstPage       = 1
+)
 
 type App struct {
 	auth  *auth.Service
@@ -47,13 +51,17 @@ type App struct {
 }
 
 type pageData struct {
-	CSRFToken string
-	Email     string
-	Notice    string
-	Feed      *core.Feed
-	Feeds     []core.Feed
-	FeedNames map[string]string
-	Items     []core.Item
+	CSRFToken    string
+	Email        string
+	Notice       string
+	Feed         *core.Feed
+	Feeds        []core.Feed
+	FeedNames    map[string]string
+	Items        []core.Item
+	Page         int
+	PreviousPage int
+	NextPage     int
+	HasNextPage  bool
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) *http.Server {
@@ -95,6 +103,14 @@ func stylesheet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(appCSS)
 }
 
+func pageNumber(r *http.Request) int {
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < firstPage {
+		return firstPage
+	}
+	return page
+}
+
 func pageNotice(r *http.Request) string {
 	switch r.URL.Query().Get("notice") {
 	case "added":
@@ -126,7 +142,8 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Spool\n"))
 		return
 	}
-	data := pageData{Email: user.Email, Notice: pageNotice(r)}
+	page := pageNumber(r)
+	data := pageData{Email: user.Email, Notice: pageNotice(r), Page: page}
 	if a.feeds != nil {
 		var err error
 		data.Feeds, err = a.feeds.ListFeeds(r.Context())
@@ -134,10 +151,18 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 			return
 		}
-		data.Items, err = a.feeds.Latest(r.Context(), latestItemLimit)
+		data.Items, err = a.feeds.Latest(r.Context(), latestItemLimit+1, (page-firstPage)*latestItemLimit)
 		if err != nil {
 			http.Error(w, "items unavailable", http.StatusInternalServerError)
 			return
+		}
+		if len(data.Items) > latestItemLimit {
+			data.Items = data.Items[:latestItemLimit]
+			data.HasNextPage = true
+			data.NextPage = page + 1
+		}
+		if page > firstPage {
+			data.PreviousPage = page - 1
 		}
 	}
 	data.FeedNames = feedNames(data.Feeds)

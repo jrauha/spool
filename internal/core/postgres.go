@@ -221,8 +221,8 @@ func (s *PostgresStore) ListItems(ctx context.Context, feedID string) ([]Item, e
 	return items, rows.Err()
 }
 
-func (s *PostgresStore) ListLatestItems(ctx context.Context, limit int) ([]Item, error) {
-	if limit <= 0 {
+func (s *PostgresStore) ListLatestItems(ctx context.Context, limit, offset int) ([]Item, error) {
+	if limit <= 0 || offset < 0 {
 		return []Item{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -230,8 +230,8 @@ func (s *PostgresStore) ListLatestItems(ctx context.Context, limit int) ([]Item,
 			published_at, created_at, updated_at
 		FROM items
 		ORDER BY published_at DESC NULLS LAST, created_at DESC
-		LIMIT $1
-	`, limit)
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

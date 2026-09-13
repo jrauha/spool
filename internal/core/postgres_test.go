@@ -107,12 +107,32 @@ func TestPostgresStoreItems(t *testing.T) {
 		t.Fatalf("items = %#v, want updated item", items)
 	}
 
-	latest, err := store.ListLatestItems(ctx, 1)
+	latest, err := store.ListLatestItems(ctx, 1, 0)
 	if err != nil {
 		t.Fatalf("ListLatestItems returned error: %v", err)
 	}
 	if len(latest) != 1 || latest[0].ID != item.ID {
 		t.Fatalf("latest = %#v, want updated item", latest)
+	}
+
+	newerPublishedAt := publishedAt.Add(time.Hour)
+	_, _, err = store.UpsertItem(ctx, Item{
+		FeedID:      feed.ID,
+		GUID:        "item-2",
+		URL:         "https://example.com/items/2",
+		Title:       "Second item",
+		PublishedAt: &newerPublishedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertItem newer returned error: %v", err)
+	}
+
+	latest, err = store.ListLatestItems(ctx, 1, 1)
+	if err != nil {
+		t.Fatalf("ListLatestItems page returned error: %v", err)
+	}
+	if len(latest) != 1 || latest[0].ID != item.ID {
+		t.Fatalf("latest page = %#v, want first item", latest)
 	}
 }
 
