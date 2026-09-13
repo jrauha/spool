@@ -1,0 +1,20 @@
+<!doctype html>
+<title>{{.Feed.Title}} · Spool</title>
+<p><a href="/">Spool</a></p>
+<h1>{{.Feed.Title}}</h1>
+{{if .Feed.Description}}<p>{{.Feed.Description}}</p>{{end}}
+{{if .Feed.SiteURL}}<p><a href="{{.Feed.SiteURL}}">Site</a></p>{{end}}
+{{if .Feed.LastError}}<p>Last refresh error: {{.Feed.LastError}}</p>{{end}}
+<form method="post" action="/feeds/{{.Feed.ID}}/refresh">
+  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+  <button>Refresh</button>
+</form>
+
+<h2>Items</h2>
+<ul>
+{{range .Items}}
+  <li><a href="{{.URL}}">{{.Title}}</a></li>
+{{else}}
+  <li>No items yet.</li>
+{{end}}
+</ul>

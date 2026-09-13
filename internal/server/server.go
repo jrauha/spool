@@ -41,6 +41,7 @@ type App struct {
 type pageData struct {
 	CSRFToken string
 	Email     string
+	Feed      *core.Feed
 	Feeds     []core.Feed
 	Items     []core.Item
 }
@@ -66,6 +67,7 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.HandleFunc("POST /login", app.login)
 	mux.HandleFunc("POST /logout", app.logout)
 	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
+	mux.Handle("GET /feeds/{id}", app.requireAuth(http.HandlerFunc(app.feedDetail)))
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
@@ -99,6 +101,29 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.renderPage(w, r, "home.html", data)
+}
+
+func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	feed, err := a.feeds.Find(r.Context(), r.PathValue("id"))
+	if errors.Is(err, core.ErrFeedNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "feed unavailable", http.StatusInternalServerError)
+		return
+	}
+	items, err := a.feeds.Items(r.Context(), feed.ID)
+	if err != nil {
+		http.Error(w, "items unavailable", http.StatusInternalServerError)
+		return
+	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	a.renderPage(w, r, "feed.html", pageData{Email: user.Email, Feed: &feed, Items: items})
 }
 
 func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {

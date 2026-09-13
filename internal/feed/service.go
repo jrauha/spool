@@ -21,6 +21,7 @@ type Store interface {
 	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	FindFeed(ctx context.Context, id string) (core.Feed, error)
 	ListFeeds(ctx context.Context) ([]core.Feed, error)
+	ListItems(ctx context.Context, feedID string) ([]core.Item, error)
 	ListLatestItems(ctx context.Context, limit int) ([]core.Item, error)
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
@@ -43,8 +44,16 @@ func (s *Service) ListFeeds(ctx context.Context) ([]core.Feed, error) {
 	return s.store.ListFeeds(ctx)
 }
 
+func (s *Service) Find(ctx context.Context, id string) (core.Feed, error) {
+	return s.store.FindFeed(ctx, id)
+}
+
 func (s *Service) Latest(ctx context.Context, limit int) ([]core.Item, error) {
 	return s.store.ListLatestItems(ctx, limit)
+}
+
+func (s *Service) Items(ctx context.Context, feedID string) ([]core.Item, error) {
+	return s.store.ListItems(ctx, feedID)
 }
 
 func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {

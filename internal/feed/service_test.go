@@ -76,6 +76,10 @@ func (s *refreshStore) ListFeeds(ctx context.Context) ([]core.Feed, error) {
 	return []core.Feed{s.feed}, nil
 }
 
+func (s *refreshStore) ListItems(ctx context.Context, feedID string) ([]core.Item, error) {
+	return s.items, nil
+}
+
 func (s *refreshStore) ListLatestItems(ctx context.Context, limit int) ([]core.Item, error) {
 	return s.items, nil
 }

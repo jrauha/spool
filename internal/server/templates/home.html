@@ -14,7 +14,7 @@
 <ul>
 {{range .Feeds}}
   <li>
-    {{.Title}}
+    <a href="/feeds/{{.ID}}">{{.Title}}</a>
     <form method="post" action="/feeds/{{.ID}}/refresh">
       <input name="csrf_token" type="hidden" value="{{$.CSRFToken}}">
       <button>Refresh</button>
