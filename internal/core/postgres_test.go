@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	dbkit "github.com/spool-reader/spool/internal/db"
 )
@@ -44,6 +46,92 @@ func TestPostgresStoreFeeds(t *testing.T) {
 	if len(feeds) != 1 || feeds[0].ID != created.ID {
 		t.Fatalf("feeds = %#v, want created feed", feeds)
 	}
+}
+
+func TestPostgresStoreItems(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+	publishedAt := time.Now().UTC().Add(-time.Hour)
+
+	item, created, err := store.UpsertItem(ctx, Item{
+		FeedID:      feed.ID,
+		GUID:        "item-1",
+		URL:         "https://example.com/items/1",
+		Title:       "First item",
+		Summary:     "Original summary",
+		PublishedAt: &publishedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertItem returned error: %v", err)
+	}
+	if !created {
+		t.Fatal("item was not created")
+	}
+
+	item, created, err = store.UpsertItem(ctx, Item{
+		FeedID:  feed.ID,
+		GUID:    "item-1",
+		URL:     "https://example.com/items/1",
+		Title:   "First item",
+		Summary: "Updated summary",
+	})
+	if err != nil {
+		t.Fatalf("UpsertItem update returned error: %v", err)
+	}
+	if created {
+		t.Fatal("existing item was reported as created")
+	}
+	if item.Summary != "Updated summary" {
+		t.Fatalf("summary = %q, want updated summary", item.Summary)
+	}
+
+	items, err := store.ListItems(ctx, feed.ID)
+	if err != nil {
+		t.Fatalf("ListItems returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != item.ID {
+		t.Fatalf("items = %#v, want updated item", items)
+	}
+}
+
+func TestPostgresStoreEvents(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+
+	event, err := store.AppendEvent(ctx, Event{
+		Name:    EventFeedAdded,
+		Entity:  "feed",
+		Payload: json.RawMessage(`{"url":"https://example.com/feed.xml"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendEvent returned error: %v", err)
+	}
+	if event.ID == "" {
+		t.Fatal("event ID is empty")
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("Unmarshal payload: %v", err)
+	}
+	if payload["url"] != "https://example.com/feed.xml" {
+		t.Fatalf("payload = %s", event.Payload)
+	}
+}
+
+func testFeed(t *testing.T, store *PostgresStore, ctx context.Context) Feed {
+	t.Helper()
+
+	feed, err := store.CreateFeed(ctx, Feed{
+		URL:   "https://example.com/feed.xml",
+		Title: "Example",
+	})
+	if err != nil {
+		t.Fatalf("CreateFeed returned error: %v", err)
+	}
+	return feed
 }
 
 func openTestDB(t *testing.T) *sql.DB {
