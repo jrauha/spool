@@ -57,6 +57,7 @@ type App struct {
 	auth         *auth.Service
 	feeds        *feed.Service
 	cookieSecure bool
+	ready        func(context.Context) error
 }
 
 type pageData struct {
@@ -74,10 +75,10 @@ type pageData struct {
 	HasNextPage  bool
 }
 
-func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) *http.Server {
+func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure),
+		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready),
 		ReadTimeout:       serverReadTimeout,
 		ReadHeaderTimeout: serverHeaderTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -86,17 +87,18 @@ func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *fe
 }
 
 func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http.Handler {
-	return newMux(log, authSvc, feedSvc, false)
+	return newMux(log, authSvc, feedSvc, false, nil)
 }
 
-func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool) http.Handler {
+func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure}
+	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /readyz", app.readyz)
 	mux.HandleFunc("GET /assets/app.css", stylesheet)
 	mux.HandleFunc("GET /setup", app.setupForm)
 	mux.HandleFunc("POST /setup", app.setup)
@@ -189,6 +191,14 @@ func feedIcons(feeds []core.Feed) map[string]string {
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *App) readyz(w http.ResponseWriter, r *http.Request) {
+	if a.ready != nil && a.ready(r.Context()) != nil {
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+		return
+	}
+	healthz(w, r)
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {

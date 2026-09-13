@@ -116,6 +116,19 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestReadyz(t *testing.T) {
+	handler := newMux(nil, nil, nil, false, func(context.Context) error {
+		return errors.New("database unavailable")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
 func TestHome(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -272,7 +285,7 @@ func TestLoginAndLogout(t *testing.T) {
 		"password": {testPass},
 	})
 	loginRec := httptest.NewRecorder()
-	newMux(nil, svc, nil, true).ServeHTTP(loginRec, loginReq)
+	newMux(nil, svc, nil, true, nil).ServeHTTP(loginRec, loginReq)
 
 	if loginRec.Code != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d", loginRec.Code, http.StatusSeeOther)

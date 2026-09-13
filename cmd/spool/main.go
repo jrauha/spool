@@ -44,27 +44,35 @@ func main() {
 	authSvc := auth.NewService(store)
 	feedSvc := feed.NewService(coreStore, nil)
 	worker := feed.NewWorker(coreStore, feedSvc, log)
-	srv := server.New(cfg, log, authSvc, feedSvc)
+	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	serverErr := make(chan error, 1)
+	workerErr := make(chan error, 1)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("refresh worker failed", "error", err)
-		}
+		workerErr <- worker.Run(ctx)
 	}()
-
 	go func() {
 		log.Info("starting spool", "addr", cfg.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server failed", "error", err)
-			os.Exit(1)
-		}
+		serverErr <- srv.ListenAndServe()
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server failed", "error", err)
+		}
+		stop()
+	case err := <-workerErr:
+		if !errors.Is(err, context.Canceled) {
+			log.Error("refresh worker failed", "error", err)
+		}
+		stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
