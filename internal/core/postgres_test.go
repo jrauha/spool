@@ -116,6 +116,29 @@ func TestPostgresStoreItems(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreEnqueueDueRefresh(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+
+	queued, err := store.EnqueueDueRefresh(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("EnqueueDueRefresh returned error: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued = %d, want 1", queued)
+	}
+
+	job, err := store.ClaimRefresh(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimRefresh returned error: %v", err)
+	}
+	if job.FeedID != feed.ID {
+		t.Fatalf("feed ID = %q, want %q", job.FeedID, feed.ID)
+	}
+}
+
 func TestPostgresStoreRefreshJobs(t *testing.T) {
 	database := openTestDB(t)
 	store := NewPostgresStore(database)
@@ -136,6 +159,22 @@ func TestPostgresStoreRefreshJobs(t *testing.T) {
 	_, err = store.ClaimRefresh(ctx, time.Minute)
 	if !errors.Is(err, ErrNoRefreshJob) {
 		t.Fatalf("ClaimRefresh error = %v, want %v", err, ErrNoRefreshJob)
+	}
+
+	retried, err := store.RetryRefresh(ctx, job.FeedID, job.LeaseToken, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RetryRefresh returned error: %v", err)
+	}
+	if !retried {
+		t.Fatal("job was not retried")
+	}
+
+	job, err = store.ClaimRefresh(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimRefresh retry returned error: %v", err)
+	}
+	if job.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", job.Attempts)
 	}
 
 	completed, err := store.CompleteRefresh(ctx, job.FeedID, job.LeaseToken)

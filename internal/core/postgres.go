@@ -77,6 +77,22 @@ func (s *PostgresStore) ListFeeds(ctx context.Context) ([]Feed, error) {
 	return feeds, rows.Err()
 }
 
+func (s *PostgresStore) EnqueueDueRefresh(ctx context.Context, interval time.Duration) (int, error) {
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO feed_refresh_jobs (feed_id, available_at)
+		SELECT id, now()
+		FROM feeds
+		WHERE refreshed_at IS NULL
+			OR refreshed_at <= now() - $1 * interval '1 second'
+		ON CONFLICT (feed_id) DO NOTHING
+	`, interval.Seconds())
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	return int(count), err
+}
+
 func (s *PostgresStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO feed_refresh_jobs (feed_id, available_at)
@@ -113,6 +129,19 @@ func (s *PostgresStore) ClaimRefresh(ctx context.Context, lease time.Duration) (
 		return RefreshJob{}, ErrNoRefreshJob
 	}
 	return job, err
+}
+
+func (s *PostgresStore) RetryRefresh(ctx context.Context, feedID, leaseToken string, availableAt time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE feed_refresh_jobs
+		SET available_at = $3, lease_token = NULL, lease_until = NULL, updated_at = now()
+		WHERE feed_id = $1 AND lease_token = $2
+	`, feedID, leaseToken, availableAt)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count != 0, err
 }
 
 func (s *PostgresStore) CompleteRefresh(ctx context.Context, feedID, leaseToken string) (bool, error) {

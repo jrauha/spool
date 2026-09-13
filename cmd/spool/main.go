@@ -40,9 +40,21 @@ func main() {
 	}
 
 	store := auth.NewPostgresStore(database)
+	coreStore := core.NewPostgresStore(database)
 	authSvc := auth.NewService(store)
-	feedSvc := feed.NewService(core.NewPostgresStore(database), nil)
+	feedSvc := feed.NewService(coreStore, nil)
+	worker := feed.NewWorker(coreStore, feedSvc, log)
 	srv := server.New(cfg, log, authSvc, feedSvc)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("refresh worker failed", "error", err)
+		}
+	}()
 
 	go func() {
 		log.Info("starting spool", "addr", cfg.Addr)
@@ -52,8 +64,6 @@ func main() {
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -61,5 +71,10 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("shutdown failed", "error", err)
 		os.Exit(1)
+	}
+	select {
+	case <-workerDone:
+	case <-shutdownCtx.Done():
+		log.Error("refresh worker shutdown timed out")
 	}
 }
