@@ -7,14 +7,15 @@
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-<div class="app-shell">
-  <header class="site-header">
+<div id="spool-app" class="app-shell" data-ui-region="app">
+  <header id="spool-header" class="site-header" data-ui-region="header">
     <a class="brand" href="/">Spool</a>
     <nav aria-label="Main navigation"><a href="/">Reading</a><a aria-current="page" href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
   </header>
-  <main class="content-column">
-    <header class="page-heading"><h1>Feeds</h1><p>Manage the sources in your reading list.</p></header>
+  <main id="spool-main" class="content-column" data-ui-region="feed-management">
+    <header class="page-heading" data-ui-region="page-header"><h1>Feeds</h1><p>Manage the sources in your reading list.</p></header>
+    <div class="plugin-slot plugin-slot--page" data-plugin-slot="page.after-header"></div>
     {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
     <form class="add-feed" method="post" action="/feeds">
       <label for="feed-url">Feed URL</label>
@@ -22,9 +23,9 @@
     </form>
     <ul class="feed-list">
     {{range .Feeds}}
-      <li class="feed-row">
-        <div><a class="feed-title" href="/feeds/{{.ID}}">{{.Title}}</a>{{if .Description}}<p class="feed-description">{{.Description}}</p>{{end}}{{if .LastError}}<p class="feed-error">Last refresh failed: {{.LastError}}</p>{{end}}</div>
-        <form method="post" action="/feeds/{{.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Refresh</button></form>
+      <li id="feed-{{.ID}}" class="feed-row" data-entity="feed" data-feed-id="{{.ID}}">
+        <div><a class="feed-title" data-ui-region="feed-title" href="/feeds/{{.ID}}">{{.Title}}</a>{{if .Description}}<p class="feed-description" data-ui-region="feed-description">{{.Description}}</p>{{end}}{{if .LastError}}<p class="feed-error" data-ui-region="feed-error">Last refresh failed: {{.LastError}}</p>{{end}}<div class="plugin-slot plugin-slot--feed-metadata" data-plugin-slot="feed.metadata"></div></div>
+        <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Refresh</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
       </li>
     {{else}}
       <li class="empty-state">No feeds yet.</li>

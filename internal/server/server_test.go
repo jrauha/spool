@@ -58,6 +58,22 @@ func TestRichTextSanitizesContent(t *testing.T) {
 	}
 }
 
+func TestTemplatesExposePluginSlots(t *testing.T) {
+	for _, path := range []string{
+		"templates/home.html",
+		"templates/feeds.html",
+		"templates/feed.html",
+	} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if !strings.Contains(string(content), `data-plugin-slot=`) {
+			t.Fatalf("template %q has no plugin slot", path)
+		}
+	}
+}
+
 func TestStylesheet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	rec := httptest.NewRecorder()

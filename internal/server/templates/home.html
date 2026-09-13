@@ -7,21 +7,24 @@
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-<div class="app-shell">
-  <header class="site-header">
+<div id="spool-app" class="app-shell" data-ui-region="app">
+  <header id="spool-header" class="site-header" data-ui-region="header">
     <a class="brand" href="/">Spool</a>
     <nav aria-label="Main navigation"><a aria-current="page" href="/">Reading</a><a href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
   </header>
-  <main class="reading-column">
-    <header class="page-heading"><h1>Latest</h1><p>New items from your feeds.</p></header>
+  <main id="spool-main" class="reading-column" data-ui-region="reading-list">
+    <header class="page-heading" data-ui-region="page-header"><h1>Latest</h1><p>New items from your feeds.</p></header>
+    <div class="plugin-slot plugin-slot--page" data-plugin-slot="page.after-header"></div>
     {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
     <ul class="item-list">
     {{range .Items}}
-      <li class="item-row">
-        <p class="item-source"><a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
-        <a class="item-title" href="{{.URL}}">{{.Title}}</a>
-        {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
+      <li id="item-{{.ID}}" class="item-row" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
+        <p class="item-source" data-ui-region="item-source"><a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
+        <a class="item-title" data-ui-region="item-title" href="{{.URL}}">{{.Title}}</a>
+        {{if .Summary}}<div class="item-summary" data-ui-region="item-summary">{{richText .Summary}}</div>{{end}}
+        <div class="plugin-slot plugin-slot--item-metadata" data-plugin-slot="item.metadata"></div>
+        <div class="plugin-slot plugin-slot--item-actions" data-plugin-slot="item.actions"></div>
       </li>
     {{else}}
       <li class="empty-state">No items yet. Add a feed, then allow it a moment to refresh.</li>

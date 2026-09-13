@@ -50,6 +50,9 @@ a:hover { color: var(--color-accent-hover); text-decoration: underline; }
 .item-summary, .feed-description { margin-top: var(--space-2); color: var(--color-muted); font-size: 0.875rem; }
 .item-summary p, .feed-description p { margin: var(--space-2) 0 0; }
 .item-summary p:first-child, .feed-description p:first-child { margin-top: 0; }
+.plugin-slot:empty { display: none; }
+.plugin-slot { margin-top: var(--space-2); }
+.plugin-slot--item-actions, .plugin-slot--feed-actions { display: flex; gap: var(--space-2); }
 
 .add-feed { display: grid; gap: var(--space-2); margin-bottom: var(--space-6); padding: var(--space-4); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); }
 .add-feed label { font-size: 0.8125rem; font-weight: 600; }
