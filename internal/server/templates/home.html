@@ -2,6 +2,38 @@
 <title>Spool</title>
 <h1>Spool</h1>
 <p>Signed in as {{.Email}}</p>
+
+<h2>Add feed</h2>
+<form method="post" action="/feeds">
+  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+  <label>Feed URL <input name="url" type="url" required></label>
+  <button>Add</button>
+</form>
+
+<h2>Feeds</h2>
+<ul>
+{{range .Feeds}}
+  <li>
+    {{.Title}}
+    <form method="post" action="/feeds/{{.ID}}/refresh">
+      <input name="csrf_token" type="hidden" value="{{$.CSRFToken}}">
+      <button>Refresh</button>
+    </form>
+  </li>
+{{else}}
+  <li>No feeds yet.</li>
+{{end}}
+</ul>
+
+<h2>Latest items</h2>
+<ul>
+{{range .Items}}
+  <li><a href="{{.URL}}">{{.Title}}</a></li>
+{{else}}
+  <li>No items yet.</li>
+{{end}}
+</ul>
+
 <form method="post" action="/logout">
   <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
   <button>Log out</button>

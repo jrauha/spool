@@ -13,7 +13,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
+	"github.com/spool-reader/spool/internal/core"
 	"github.com/spool-reader/spool/internal/db"
+	"github.com/spool-reader/spool/internal/feed"
 	"github.com/spool-reader/spool/internal/server"
 )
 
@@ -37,8 +39,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	authSvc := auth.NewService(auth.NewPostgresStore(database))
-	srv := server.New(cfg, log, authSvc)
+	store := auth.NewPostgresStore(database)
+	authSvc := auth.NewService(store)
+	feedSvc := feed.NewService(core.NewPostgresStore(database), nil)
+	srv := server.New(cfg, log, authSvc, feedSvc)
 
 	go func() {
 		log.Info("starting spool", "addr", cfg.Addr)

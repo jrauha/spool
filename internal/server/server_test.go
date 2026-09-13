@@ -25,7 +25,7 @@ func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
-	NewMux(slog.Default(), nil).ServeHTTP(rec, req)
+	NewMux(slog.Default(), nil, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -39,7 +39,7 @@ func TestHome(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, nil).ServeHTTP(rec, req)
+	NewMux(nil, nil, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -53,7 +53,7 @@ func TestHomeRedirectsToLogin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, auth.NewService(newServerAuthStore())).ServeHTTP(rec, req)
+	NewMux(nil, auth.NewService(newServerAuthStore()), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
@@ -67,7 +67,7 @@ func TestLoginRedirectsToSetup(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, auth.NewService(newServerAuthStore())).ServeHTTP(rec, req)
+	NewMux(nil, auth.NewService(newServerAuthStore()), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
@@ -83,7 +83,7 @@ func TestSetupCheckFailureReturnsServerError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, auth.NewService(store)).ServeHTTP(rec, req)
+	NewMux(nil, auth.NewService(store), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
@@ -100,7 +100,7 @@ func TestSetupRejectsMissingCSRF(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, auth.NewService(newServerAuthStore())).ServeHTTP(rec, req)
+	NewMux(nil, auth.NewService(newServerAuthStore()), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
@@ -115,7 +115,7 @@ func TestSetupCreatesSession(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 
-	NewMux(nil, auth.NewService(store)).ServeHTTP(rec, req)
+	NewMux(nil, auth.NewService(store), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
@@ -137,7 +137,7 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 		"password": {"wrong-password"},
 	})
 	rec := httptest.NewRecorder()
-	NewMux(nil, svc).ServeHTTP(rec, req)
+	NewMux(nil, svc, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
@@ -155,7 +155,7 @@ func TestAuthenticatedHome(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: result.Token})
 	rec := httptest.NewRecorder()
-	NewMux(nil, svc).ServeHTTP(rec, req)
+	NewMux(nil, svc, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -177,7 +177,7 @@ func TestLoginAndLogout(t *testing.T) {
 		"password": {testPass},
 	})
 	loginRec := httptest.NewRecorder()
-	NewMux(nil, svc).ServeHTTP(loginRec, loginReq)
+	NewMux(nil, svc, nil).ServeHTTP(loginRec, loginReq)
 
 	if loginRec.Code != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d", loginRec.Code, http.StatusSeeOther)
@@ -190,7 +190,7 @@ func TestLoginAndLogout(t *testing.T) {
 	logoutReq := csrfFormRequest(http.MethodPost, "/logout", nil)
 	logoutReq.AddCookie(cookies[0])
 	logoutRec := httptest.NewRecorder()
-	NewMux(nil, svc).ServeHTTP(logoutRec, logoutReq)
+	NewMux(nil, svc, nil).ServeHTTP(logoutRec, logoutReq)
 
 	if logoutRec.Code != http.StatusSeeOther {
 		t.Fatalf("logout status = %d, want %d", logoutRec.Code, http.StatusSeeOther)
@@ -202,7 +202,7 @@ func TestLoginAndLogout(t *testing.T) {
 	homeReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	homeReq.AddCookie(cookies[0])
 	homeRec := httptest.NewRecorder()
-	NewMux(nil, svc).ServeHTTP(homeRec, homeReq)
+	NewMux(nil, svc, nil).ServeHTTP(homeRec, homeReq)
 	if homeRec.Code != http.StatusSeeOther {
 		t.Fatalf("home status = %d, want %d", homeRec.Code, http.StatusSeeOther)
 	}

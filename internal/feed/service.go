@@ -20,6 +20,8 @@ const (
 type Store interface {
 	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	FindFeed(ctx context.Context, id string) (core.Feed, error)
+	ListFeeds(ctx context.Context) ([]core.Feed, error)
+	ListLatestItems(ctx context.Context, limit int) ([]core.Item, error)
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
 	AppendEvent(ctx context.Context, event core.Event) (core.Event, error)
@@ -35,6 +37,14 @@ func NewService(store Store, client *http.Client) *Service {
 		client = &http.Client{Timeout: defaultRequestTimeout}
 	}
 	return &Service{store: store, client: client}
+}
+
+func (s *Service) ListFeeds(ctx context.Context) ([]core.Feed, error) {
+	return s.store.ListFeeds(ctx)
+}
+
+func (s *Service) Latest(ctx context.Context, limit int) ([]core.Item, error) {
+	return s.store.ListLatestItems(ctx, limit)
 }
 
 func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {

@@ -12,6 +12,8 @@ import (
 
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
+	"github.com/spool-reader/spool/internal/core"
+	"github.com/spool-reader/spool/internal/feed"
 )
 
 const (
@@ -29,28 +31,33 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
+const latestItemLimit = 50
+
 type App struct {
-	auth *auth.Service
+	auth  *auth.Service
+	feeds *feed.Service
 }
 
 type pageData struct {
 	CSRFToken string
 	Email     string
+	Feeds     []core.Feed
+	Items     []core.Item
 }
 
-func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service) *http.Server {
+func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) *http.Server {
 	return &http.Server{
 		Addr:    cfg.Addr,
-		Handler: NewMux(log, authSvc),
+		Handler: NewMux(log, authSvc, feedSvc),
 	}
 }
 
-func NewMux(log *slog.Logger, authSvc *auth.Service) http.Handler {
+func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc}
+	app := &App{auth: authSvc, feeds: feedSvc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /setup", app.setupForm)
@@ -59,6 +66,8 @@ func NewMux(log *slog.Logger, authSvc *auth.Service) http.Handler {
 	mux.HandleFunc("POST /login", app.login)
 	mux.HandleFunc("POST /logout", app.logout)
 	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
+	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
+	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
 	return requestLogger(log, mux)
 }
@@ -75,7 +84,51 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Spool\n"))
 		return
 	}
-	a.renderPage(w, r, "home.html", pageData{Email: user.Email})
+	data := pageData{Email: user.Email}
+	if a.feeds != nil {
+		var err error
+		data.Feeds, err = a.feeds.ListFeeds(r.Context())
+		if err != nil {
+			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
+			return
+		}
+		data.Items, err = a.feeds.Latest(r.Context(), latestItemLimit)
+		if err != nil {
+			http.Error(w, "items unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	a.renderPage(w, r, "home.html", data)
+}
+
+func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if _, err := a.feeds.Add(r.Context(), r.FormValue("url")); err != nil {
+		http.Error(w, "feed add failed", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if err := a.feeds.Refresh(r.Context(), r.PathValue("id")); err != nil {
+		http.Error(w, "feed refresh failed", http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
@@ -101,12 +154,7 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
-	}
-	if !validCSRF(r) {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !a.parseCSRFForm(w, r) {
 		return
 	}
 	result, err := a.auth.Setup(r.Context(), r.FormValue("email"), r.FormValue("password"))
@@ -129,12 +177,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if a.redirectToSetup(w, r) {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
-	}
-	if !validCSRF(r) {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !a.parseCSRFForm(w, r) {
 		return
 	}
 	result, err := a.auth.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
@@ -151,12 +194,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
-	}
-	if !validCSRF(r) {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+	if !a.parseCSRFForm(w, r) {
 		return
 	}
 	if a.auth != nil {
@@ -259,6 +297,18 @@ func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
 		SameSite: http.SameSiteLaxMode,
 	})
 	return token, nil
+}
+
+func (a *App) parseCSRFForm(w http.ResponseWriter, r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return false
+	}
+	if !validCSRF(r) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func validCSRF(r *http.Request) bool {
