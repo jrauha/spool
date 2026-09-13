@@ -43,7 +43,7 @@ type contextKey string
 const userContextKey contextKey = "user"
 
 const (
-	latestItemLimit = 50
+	latestItemLimit = 20
 	firstPage       = 1
 )
 
