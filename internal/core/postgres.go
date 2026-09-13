@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 var (
 	ErrFeedNotFound = errors.New("feed not found")
 	ErrItemNotFound = errors.New("item not found")
+	ErrNoRefreshJob = errors.New("no refresh job available")
 )
 
 type PostgresStore struct {
@@ -73,6 +75,56 @@ func (s *PostgresStore) ListFeeds(ctx context.Context) ([]Feed, error) {
 		feeds = append(feeds, feed)
 	}
 	return feeds, rows.Err()
+}
+
+func (s *PostgresStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO feed_refresh_jobs (feed_id, available_at)
+		VALUES ($1, $2)
+		ON CONFLICT (feed_id) DO UPDATE
+		SET available_at = LEAST(feed_refresh_jobs.available_at, EXCLUDED.available_at),
+			updated_at = now()
+	`, feedID, availableAt)
+	return err
+}
+
+func (s *PostgresStore) ClaimRefresh(ctx context.Context, lease time.Duration) (RefreshJob, error) {
+	var job RefreshJob
+	err := s.db.QueryRowContext(ctx, `
+		WITH next_job AS (
+			SELECT feed_id
+			FROM feed_refresh_jobs
+			WHERE available_at <= now()
+				AND (lease_until IS NULL OR lease_until < now())
+			ORDER BY available_at, feed_id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE feed_refresh_jobs jobs
+		SET lease_token = gen_random_uuid(),
+			lease_until = now() + $1 * interval '1 second',
+			attempts = jobs.attempts + 1,
+			updated_at = now()
+		FROM next_job
+		WHERE jobs.feed_id = next_job.feed_id
+		RETURNING jobs.feed_id::text, jobs.lease_token::text, jobs.attempts
+	`, lease.Seconds()).Scan(&job.FeedID, &job.LeaseToken, &job.Attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RefreshJob{}, ErrNoRefreshJob
+	}
+	return job, err
+}
+
+func (s *PostgresStore) CompleteRefresh(ctx context.Context, feedID, leaseToken string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM feed_refresh_jobs
+		WHERE feed_id = $1 AND lease_token = $2
+	`, feedID, leaseToken)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count != 0, err
 }
 
 func (s *PostgresStore) UpsertItem(ctx context.Context, item Item) (Item, bool, error) {

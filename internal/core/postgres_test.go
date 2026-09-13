@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -112,6 +113,37 @@ func TestPostgresStoreItems(t *testing.T) {
 	}
 	if len(latest) != 1 || latest[0].ID != item.ID {
 		t.Fatalf("latest = %#v, want updated item", latest)
+	}
+}
+
+func TestPostgresStoreRefreshJobs(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+
+	if err := store.EnqueueRefresh(ctx, feed.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("EnqueueRefresh returned error: %v", err)
+	}
+	job, err := store.ClaimRefresh(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimRefresh returned error: %v", err)
+	}
+	if job.FeedID != feed.ID || job.LeaseToken == "" || job.Attempts != 1 {
+		t.Fatalf("job = %#v", job)
+	}
+
+	_, err = store.ClaimRefresh(ctx, time.Minute)
+	if !errors.Is(err, ErrNoRefreshJob) {
+		t.Fatalf("ClaimRefresh error = %v, want %v", err, ErrNoRefreshJob)
+	}
+
+	completed, err := store.CompleteRefresh(ctx, job.FeedID, job.LeaseToken)
+	if err != nil {
+		t.Fatalf("CompleteRefresh returned error: %v", err)
+	}
+	if !completed {
+		t.Fatal("job was not completed")
 	}
 }
 

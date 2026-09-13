@@ -30,6 +30,12 @@ type Item struct {
 	UpdatedAt   time.Time
 }
 
+type RefreshJob struct {
+	FeedID     string
+	LeaseToken string
+	Attempts   int
+}
+
 type Event struct {
 	ID        string
 	Name      string
