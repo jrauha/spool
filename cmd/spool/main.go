@@ -44,7 +44,7 @@ func main() {
 	authSvc := auth.NewService(store)
 	feedSvc := feed.NewService(coreStore, nil)
 	worker := feed.NewWorker(coreStore, feedSvc, log)
-	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext)
+	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, worker.PrometheusMetrics)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

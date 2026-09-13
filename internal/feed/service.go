@@ -17,6 +17,22 @@ const (
 	maxFeedBytes          = 10 << 20
 )
 
+type permanentRefreshError struct {
+	err error
+}
+
+func (e permanentRefreshError) Error() string {
+	return e.err.Error()
+}
+
+func (e permanentRefreshError) Unwrap() error {
+	return e.err
+}
+
+func (e permanentRefreshError) Permanent() bool {
+	return true
+}
+
 type Store interface {
 	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	DeleteFeed(ctx context.Context, id string) error
@@ -108,7 +124,11 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return s.recordError(ctx, feed, fmt.Errorf("feed request returned %s", resp.Status))
+		err := fmt.Errorf("feed request returned %s", resp.Status)
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests {
+			err = permanentRefreshError{err: err}
+		}
+		return s.recordError(ctx, feed, err)
 	}
 
 	parsed, err := Parse(io.LimitReader(resp.Body, maxFeedBytes))

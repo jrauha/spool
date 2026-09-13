@@ -58,6 +58,7 @@ type App struct {
 	feeds        *feed.Service
 	cookieSecure bool
 	ready        func(context.Context) error
+	metrics      func() string
 }
 
 type pageData struct {
@@ -75,10 +76,10 @@ type pageData struct {
 	HasNextPage  bool
 }
 
-func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error) *http.Server {
+func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready),
+		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready, metrics),
 		ReadTimeout:       serverReadTimeout,
 		ReadHeaderTimeout: serverHeaderTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -87,18 +88,19 @@ func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *fe
 }
 
 func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http.Handler {
-	return newMux(log, authSvc, feedSvc, false, nil)
+	return newMux(log, authSvc, feedSvc, false, nil, nil)
 }
 
-func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error) http.Handler {
+func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error, metrics func() string) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready}
+	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", app.readyz)
+	mux.HandleFunc("GET /metrics", app.metricsHandler)
 	mux.HandleFunc("GET /assets/app.css", stylesheet)
 	mux.HandleFunc("GET /setup", app.setupForm)
 	mux.HandleFunc("POST /setup", app.setup)
@@ -192,6 +194,15 @@ func feedIcons(feeds []core.Feed) map[string]string {
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *App) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if a.metrics == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = w.Write([]byte(a.metrics()))
 }
 
 func (a *App) readyz(w http.ResponseWriter, r *http.Request) {

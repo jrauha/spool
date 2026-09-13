@@ -9,6 +9,15 @@ import (
 	"github.com/spool-reader/spool/internal/core"
 )
 
+func TestRetryDelay(t *testing.T) {
+	if got := retryDelay(1); got != defaultRetryDelay {
+		t.Fatalf("retryDelay(1) = %s, want %s", got, defaultRetryDelay)
+	}
+	if got := retryDelay(maxBackoffExponent + 2); got != defaultMaxRetryDelay {
+		t.Fatalf("retryDelay cap = %s, want %s", got, defaultMaxRetryDelay)
+	}
+}
+
 func TestWorkerSchedulesDueRefreshes(t *testing.T) {
 	store := &workerStore{}
 	worker := NewWorker(store, refreshFunc(func(ctx context.Context, id string) error { return nil }), nil)
@@ -30,6 +39,23 @@ func TestWorkerCompletesRefresh(t *testing.T) {
 	}
 	if !store.completed {
 		t.Fatal("job was not completed")
+	}
+}
+
+func TestWorkerCompletesPermanentRefreshFailure(t *testing.T) {
+	store := &workerStore{job: core.RefreshJob{FeedID: "feed-1", LeaseToken: "lease", Attempts: 1}}
+	worker := NewWorker(store, refreshFunc(func(ctx context.Context, id string) error {
+		return permanentRefreshError{err: errors.New("feed request returned 404")}
+	}), nil)
+
+	if err := worker.RunOnce(context.Background()); err == nil {
+		t.Fatal("RunOnce returned nil error")
+	}
+	if !store.completed {
+		t.Fatal("permanent refresh failure did not complete job")
+	}
+	if !store.retriedAt.IsZero() {
+		t.Fatalf("retry scheduled at %v", store.retriedAt)
 	}
 }
 
@@ -57,6 +83,7 @@ type workerStore struct {
 	job       core.RefreshJob
 	completed bool
 	retried   bool
+	retriedAt time.Time
 	scheduled bool
 }
 
@@ -81,5 +108,6 @@ func (s *workerStore) CompleteRefresh(ctx context.Context, feedID, leaseToken st
 
 func (s *workerStore) RetryRefresh(ctx context.Context, feedID, leaseToken string, availableAt time.Time) (bool, error) {
 	s.retried = true
+	s.retriedAt = availableAt
 	return true, nil
 }
