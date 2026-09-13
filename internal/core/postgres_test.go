@@ -100,7 +100,7 @@ func TestPostgresStoreItems(t *testing.T) {
 		t.Fatalf("summary = %q, want updated summary", item.Summary)
 	}
 
-	items, err := store.ListItems(ctx, feed.ID)
+	items, err := store.ListItems(ctx, feed.ID, 10, 0)
 	if err != nil {
 		t.Fatalf("ListItems returned error: %v", err)
 	}

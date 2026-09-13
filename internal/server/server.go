@@ -49,8 +49,8 @@ type contextKey string
 const userContextKey contextKey = "user"
 
 const (
-	latestItemLimit = 20
-	firstPage       = 1
+	itemsPerPage = 20
+	firstPage    = 1
 )
 
 type App struct {
@@ -110,6 +110,7 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 	mux.Handle("GET /feeds/{id}", app.requireAuth(http.HandlerFunc(app.feedDetail)))
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
+	mux.Handle("POST /feeds/{id}/delete", app.requireAuth(http.HandlerFunc(app.deleteFeed)))
 
 	return securityHeaders(requestLogger(log, mux))
 }
@@ -218,13 +219,13 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data.Feeds = withDisplayIcons(data.Feeds)
-		data.Items, err = a.feeds.Latest(r.Context(), latestItemLimit+1, (page-firstPage)*latestItemLimit)
+		data.Items, err = a.feeds.Latest(r.Context(), itemsPerPage+1, (page-firstPage)*itemsPerPage)
 		if err != nil {
 			http.Error(w, "items unavailable", http.StatusInternalServerError)
 			return
 		}
-		if len(data.Items) > latestItemLimit {
-			data.Items = data.Items[:latestItemLimit]
+		if len(data.Items) > itemsPerPage {
+			data.Items = data.Items[:itemsPerPage]
 			data.HasNextPage = true
 			data.NextPage = page + 1
 		}
@@ -266,14 +267,24 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed unavailable", http.StatusInternalServerError)
 		return
 	}
+	page := pageNumber(r)
 	feed.IconURL = displayIconURL(feed)
-	items, err := a.feeds.Items(r.Context(), feed.ID)
+	items, err := a.feeds.Items(r.Context(), feed.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
 	if err != nil {
 		http.Error(w, "items unavailable", http.StatusInternalServerError)
 		return
 	}
 	user, _ := r.Context().Value(userContextKey).(auth.User)
-	a.renderPage(w, r, "feed.html", pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Items: items})
+	data := pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Items: items, Page: page}
+	if len(data.Items) > itemsPerPage {
+		data.Items = data.Items[:itemsPerPage]
+		data.HasNextPage = true
+		data.NextPage = page + 1
+	}
+	if page > firstPage {
+		data.PreviousPage = page - 1
+	}
+	a.renderPage(w, r, "feed.html", data)
 }
 
 func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +300,25 @@ func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/feeds?notice=added", http.StatusSeeOther)
+}
+
+func (a *App) deleteFeed(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if err := a.feeds.Delete(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrFeedNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "feed delete failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
 
 func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {

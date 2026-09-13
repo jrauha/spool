@@ -49,6 +49,7 @@ type Event struct {
 const (
 	EventFeedAdded   = "feed.added"
 	EventFeedUpdated = "feed.updated"
+	EventFeedDeleted = "feed.deleted"
 	EventFeedError   = "feed.error"
 	EventItemCreated = "item.created"
 )

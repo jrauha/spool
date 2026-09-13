@@ -40,6 +40,21 @@ func TestFallbackIconURL(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesFeedAndRecordsEvent(t *testing.T) {
+	store := &refreshStore{feed: core.Feed{ID: "feed-1"}}
+	svc := NewService(store, nil)
+
+	if err := svc.Delete(context.Background(), "feed-1"); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+	if store.feed.ID != "" {
+		t.Fatalf("feed = %#v, want deleted", store.feed)
+	}
+	if len(store.events) != 1 || store.events[0].Name != core.EventFeedDeleted {
+		t.Fatalf("events = %#v", store.events)
+	}
+}
+
 func TestQueueRefresh(t *testing.T) {
 	store := &refreshStore{feed: core.Feed{ID: "feed-1"}}
 	svc := NewService(store, nil)
@@ -99,7 +114,15 @@ func (s *refreshStore) ListFeeds(ctx context.Context) ([]core.Feed, error) {
 	return []core.Feed{s.feed}, nil
 }
 
-func (s *refreshStore) ListItems(ctx context.Context, feedID string) ([]core.Item, error) {
+func (s *refreshStore) DeleteFeed(ctx context.Context, id string) error {
+	if id != s.feed.ID {
+		return core.ErrFeedNotFound
+	}
+	s.feed = core.Feed{}
+	return nil
+}
+
+func (s *refreshStore) ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
 	return s.items, nil
 }
 

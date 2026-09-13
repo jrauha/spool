@@ -16,7 +16,7 @@
   <main id="spool-main" class="reading-column" data-ui-region="feed-items" data-entity="feed" data-feed-id="{{.Feed.ID}}">
     <header class="page-heading feed-heading" data-ui-region="page-header">
       <div><p class="eyebrow"><a href="/feeds">Feeds</a></p><h1>{{if .Feed.IconURL}}<img class="feed-icon" src="{{.Feed.IconURL}}" alt="">{{end}}{{.Feed.Title}}</h1>{{if .Feed.Description}}<div class="feed-description">{{richText .Feed.Description}}</div>{{end}}<p>{{if .Feed.SiteURL}}<a href="{{.Feed.SiteURL}}">Visit site</a> · {{end}}<a href="{{.Feed.URL}}">RSS feed</a></p></div>
-      <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.Feed.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Refresh</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
+      <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.Feed.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Refresh</button></form><form method="post" action="/feeds/{{.Feed.ID}}/delete"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>Delete</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
     </header>
     <div class="plugin-slot plugin-slot--feed-metadata" data-plugin-slot="feed.metadata"></div>
     {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
@@ -34,6 +34,13 @@
       <li class="empty-state">No items yet.</li>
     {{end}}
     </ul>
+    {{if or .PreviousPage .HasNextPage}}
+    <nav class="pagination" aria-label="Pagination">
+      {{if .PreviousPage}}<a href="/feeds/{{.Feed.ID}}?page={{.PreviousPage}}">Previous</a>{{else}}<span>Previous</span>{{end}}
+      <span>Page {{.Page}}</span>
+      {{if .HasNextPage}}<a href="/feeds/{{.Feed.ID}}?page={{.NextPage}}">Next</a>{{else}}<span>Next</span>{{end}}
+    </nav>
+    {{end}}
   </main>
 </div>
 </body>

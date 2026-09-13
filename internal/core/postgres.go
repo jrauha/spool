@@ -44,6 +44,21 @@ func (s *PostgresStore) UpdateFeed(ctx context.Context, feed Feed) (Feed, error)
 	return scanFeed(row)
 }
 
+func (s *PostgresStore) DeleteFeed(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM feeds WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrFeedNotFound
+	}
+	return nil
+}
+
 func (s *PostgresStore) FindFeed(ctx context.Context, id string) (Feed, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id::text, url, title, description, site_url, icon_url, refreshed_at,
@@ -197,20 +212,24 @@ func (s *PostgresStore) FindItem(ctx context.Context, id string) (Item, error) {
 	return scanItem(row)
 }
 
-func (s *PostgresStore) ListItems(ctx context.Context, feedID string) ([]Item, error) {
+func (s *PostgresStore) ListItems(ctx context.Context, feedID string, limit, offset int) ([]Item, error) {
+	if limit <= 0 || offset < 0 {
+		return []Item{}, nil
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id::text, feed_id::text, guid, url, title, summary, author,
 			published_at, created_at, updated_at
 		FROM items
 		WHERE feed_id = $1
 		ORDER BY published_at DESC NULLS LAST, created_at DESC
-	`, feedID)
+		LIMIT $2 OFFSET $3
+	`, feedID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make([]Item, 0)
+	items := make([]Item, 0, limit)
 	for rows.Next() {
 		item, err := scanItem(rows)
 		if err != nil {

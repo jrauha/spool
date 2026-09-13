@@ -19,9 +19,10 @@ const (
 
 type Store interface {
 	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
+	DeleteFeed(ctx context.Context, id string) error
 	FindFeed(ctx context.Context, id string) (core.Feed, error)
 	ListFeeds(ctx context.Context) ([]core.Feed, error)
-	ListItems(ctx context.Context, feedID string) ([]core.Item, error)
+	ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error)
 	ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error)
 	EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
@@ -53,8 +54,15 @@ func (s *Service) Latest(ctx context.Context, limit, offset int) ([]core.Item, e
 	return s.store.ListLatestItems(ctx, limit, offset)
 }
 
-func (s *Service) Items(ctx context.Context, feedID string) ([]core.Item, error) {
-	return s.store.ListItems(ctx, feedID)
+func (s *Service) Items(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
+	return s.store.ListItems(ctx, feedID, limit, offset)
+}
+
+func (s *Service) Delete(ctx context.Context, id string) error {
+	if err := s.store.DeleteFeed(ctx, id); err != nil {
+		return err
+	}
+	return s.appendEvent(ctx, core.EventFeedDeleted, "feed", id)
 }
 
 func (s *Service) QueueRefresh(ctx context.Context, id string) error {

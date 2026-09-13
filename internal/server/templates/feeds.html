@@ -25,7 +25,7 @@
     {{range .Feeds}}
       <li id="feed-{{.ID}}" class="feed-row" data-entity="feed" data-feed-id="{{.ID}}">
         <div>{{if .IconURL}}<img class="feed-icon" src="{{.IconURL}}" alt="">{{end}}<a class="feed-title" data-ui-region="feed-title" href="/feeds/{{.ID}}">{{.Title}}</a>{{if .Description}}<p class="feed-description" data-ui-region="feed-description">{{.Description}}</p>{{end}}{{if .LastError}}<p class="feed-error" data-ui-region="feed-error">Last refresh failed: {{.LastError}}</p>{{end}}<div class="plugin-slot plugin-slot--feed-metadata" data-plugin-slot="feed.metadata"></div></div>
-        <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Refresh</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
+        <div class="feed-actions" data-ui-region="feed-actions"><form method="post" action="/feeds/{{.ID}}/refresh"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Refresh</button></form><form method="post" action="/feeds/{{.ID}}/delete"><input name="csrf_token" type="hidden" value="{{$.CSRFToken}}"><button>Delete</button></form><div class="plugin-slot plugin-slot--feed-actions" data-plugin-slot="feed.actions"></div></div>
       </li>
     {{else}}
       <li class="empty-state">No feeds yet.</li>
