@@ -105,6 +105,14 @@ func TestPostgresStoreItems(t *testing.T) {
 	if len(items) != 1 || items[0].ID != item.ID {
 		t.Fatalf("items = %#v, want updated item", items)
 	}
+
+	latest, err := store.ListLatestItems(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListLatestItems returned error: %v", err)
+	}
+	if len(latest) != 1 || latest[0].ID != item.ID {
+		t.Fatalf("latest = %#v, want updated item", latest)
+	}
 }
 
 func TestPostgresStoreEvents(t *testing.T) {

@@ -140,6 +140,33 @@ func (s *PostgresStore) ListItems(ctx context.Context, feedID string) ([]Item, e
 	return items, rows.Err()
 }
 
+func (s *PostgresStore) ListLatestItems(ctx context.Context, limit int) ([]Item, error) {
+	if limit <= 0 {
+		return []Item{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, feed_id::text, guid, url, title, summary, author,
+			published_at, created_at, updated_at
+		FROM items
+		ORDER BY published_at DESC NULLS LAST, created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Item, 0, limit)
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *PostgresStore) AppendEvent(ctx context.Context, event Event) (Event, error) {
 	payload := event.Payload
 	if len(payload) == 0 {
