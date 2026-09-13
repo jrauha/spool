@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,15 @@ func main() {
 	store := auth.NewPostgresStore(database)
 	coreStore := core.NewPostgresStore(database)
 	authSvc := auth.NewService(store)
+	setupRequired, err := authSvc.SetupRequired(context.Background())
+	if err != nil {
+		log.Error("setup check failed", "error", err)
+		os.Exit(1)
+	}
+	if setupRequired && strings.TrimSpace(cfg.SetupToken) == "" {
+		log.Error("SPOOL_SETUP_TOKEN is required before initial setup")
+		os.Exit(1)
+	}
 	feedSvc := feed.NewService(coreStore, nil)
 	worker := feed.NewWorker(coreStore, feedSvc, log)
 	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, worker.PrometheusMetrics)

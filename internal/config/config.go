@@ -8,7 +8,7 @@ import (
 const (
 	DefaultAddr         = ":8080"
 	DefaultSpoolHome    = ".spool"
-	DefaultCookieSecure = false
+	DefaultCookieSecure = true
 )
 
 type Config struct {
@@ -16,6 +16,7 @@ type Config struct {
 	SpoolHome    string
 	DatabaseURL  string
 	CookieSecure bool
+	SetupToken   string
 }
 
 func FromEnv() Config {
@@ -24,6 +25,7 @@ func FromEnv() Config {
 		SpoolHome:    envOrDefault("SPOOL_HOME", DefaultSpoolHome),
 		DatabaseURL:  os.Getenv("SPOOL_DATABASE_URL"),
 		CookieSecure: envBool("SPOOL_COOKIE_SECURE", DefaultCookieSecure),
+		SetupToken:   os.Getenv("SPOOL_SETUP_TOKEN"),
 	}
 }
 

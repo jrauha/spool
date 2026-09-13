@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -53,7 +54,7 @@ type Service struct {
 
 func NewService(store Store, client *http.Client) *Service {
 	if client == nil {
-		client = &http.Client{Timeout: defaultRequestTimeout}
+		client = safeHTTPClient()
 	}
 	return &Service{store: store, client: client}
 }
@@ -90,7 +91,7 @@ func (s *Service) QueueRefresh(ctx context.Context, id string) error {
 
 func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {
 	parsedURL, err := url.ParseRequestURI(rawURL)
-	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+	if err != nil || !validFeedURL(parsedURL) {
 		return core.Feed{}, fmt.Errorf("invalid feed URL")
 	}
 
@@ -179,6 +180,45 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+func validFeedURL(parsedURL *url.URL) bool {
+	return parsedURL.Host != "" && parsedURL.User == nil &&
+		(parsedURL.Scheme == "http" || parsedURL.Scheme == "https") &&
+		(parsedURL.Port() == "" || parsedURL.Port() == "80" || parsedURL.Port() == "443")
+}
+
+func safeHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:   defaultRequestTimeout,
+		Transport: &http.Transport{Proxy: nil, DialContext: safeDialContext},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if !validFeedURL(req.URL) {
+				return fmt.Errorf("unsafe feed redirect")
+			}
+			return nil
+		},
+	}
+}
+
+func safeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve feed host: %w", err)
+	}
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("feed host has no addresses")
+	}
+	for _, ip := range addresses {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+			return nil, fmt.Errorf("feed host resolves to a non-public address")
+		}
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
 }
 
 func fallbackIconURL(siteURL string) string {

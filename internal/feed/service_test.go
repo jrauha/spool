@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -64,6 +65,18 @@ func TestQueueRefresh(t *testing.T) {
 	}
 	if store.queuedFeedID != store.feed.ID {
 		t.Fatalf("queued feed ID = %q, want %q", store.queuedFeedID, store.feed.ID)
+	}
+}
+
+func TestValidFeedURLRejectsCredentialsAndUnsafePorts(t *testing.T) {
+	for _, rawURL := range []string{"http://user:pass@example.com/feed", "https://example.com:8080/feed"} {
+		parsedURL, err := url.Parse(rawURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if validFeedURL(parsedURL) {
+			t.Fatalf("validFeedURL(%q) = true", rawURL)
+		}
 	}
 }
 

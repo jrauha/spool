@@ -59,6 +59,7 @@ type App struct {
 	cookieSecure bool
 	ready        func(context.Context) error
 	metrics      func() string
+	setupToken   string
 }
 
 type pageData struct {
@@ -79,7 +80,7 @@ type pageData struct {
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready, metrics),
+		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready, metrics, cfg.SetupToken),
 		ReadTimeout:       serverReadTimeout,
 		ReadHeaderTimeout: serverHeaderTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -88,15 +89,15 @@ func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *fe
 }
 
 func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http.Handler {
-	return newMux(log, authSvc, feedSvc, false, nil, nil)
+	return newMux(log, authSvc, feedSvc, false, nil, nil, "")
 }
 
-func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error, metrics func() string) http.Handler {
+func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error, metrics func() string, setupToken string) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics}
+	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics, setupToken: setupToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", app.readyz)
@@ -375,6 +376,10 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if a.setupToken != "" && subtle.ConstantTimeCompare([]byte(a.setupToken), []byte(r.FormValue("setup_token"))) != 1 {
+		http.Error(w, "invalid setup token", http.StatusForbidden)
 		return
 	}
 	result, err := a.auth.Setup(r.Context(), r.FormValue("email"), r.FormValue("password"))

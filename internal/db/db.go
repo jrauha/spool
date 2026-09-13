@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -14,7 +15,12 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-const migrationLockID int64 = 810314792318951140
+const (
+	migrationLockID   int64 = 810314792318951140
+	maxOpenDBConns          = 10
+	maxIdleDBConns          = 5
+	maxDBConnLifetime       = time.Hour
+)
 
 func Open(databaseURL string) (*sql.DB, error) {
 	if strings.TrimSpace(databaseURL) == "" {
@@ -24,6 +30,9 @@ func Open(databaseURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(maxOpenDBConns)
+	db.SetMaxIdleConns(maxIdleDBConns)
+	db.SetConnMaxLifetime(maxDBConnLifetime)
 	return db, nil
 }
 
