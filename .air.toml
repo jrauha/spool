@@ -4,5 +4,5 @@ tmp_dir = "tmp"
 [build]
 cmd = "go build -o ./tmp/spool ./cmd/spool"
 bin = "./tmp/spool"
-include_ext = ["go", "html"]
+include_ext = ["go", "html", "css"]
 exclude_dir = [".git", "tmp", "vendor"]
