@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/spool-reader/spool/internal/core"
@@ -17,6 +18,7 @@ const (
 )
 
 type Store interface {
+	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	FindFeed(ctx context.Context, id string) (core.Feed, error)
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
@@ -33,6 +35,25 @@ func NewService(store Store, client *http.Client) *Service {
 		client = &http.Client{Timeout: defaultRequestTimeout}
 	}
 	return &Service{store: store, client: client}
+}
+
+func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {
+	parsedURL, err := url.ParseRequestURI(rawURL)
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return core.Feed{}, fmt.Errorf("invalid feed URL")
+	}
+
+	feed, err := s.store.CreateFeed(ctx, core.Feed{URL: rawURL, Title: rawURL})
+	if err != nil {
+		return core.Feed{}, err
+	}
+	if err := s.appendEvent(ctx, core.EventFeedAdded, "feed", feed.ID); err != nil {
+		return core.Feed{}, err
+	}
+	if err := s.Refresh(ctx, feed.ID); err != nil {
+		return feed, err
+	}
+	return s.store.FindFeed(ctx, feed.ID)
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) error {

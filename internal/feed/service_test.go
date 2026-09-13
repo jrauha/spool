@@ -10,6 +10,26 @@ import (
 	"github.com/spool-reader/spool/internal/core"
 )
 
+func TestAddCreatesFeedAndRefreshesIt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss><channel><title>Example</title></channel></rss>`))
+	}))
+	defer server.Close()
+
+	store := &refreshStore{}
+	svc := NewService(store, server.Client())
+	feed, err := svc.Add(context.Background(), server.URL)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if feed.ID == "" || store.feed.Title != "Example" {
+		t.Fatalf("feed = %#v", store.feed)
+	}
+	if len(store.events) != 2 {
+		t.Fatalf("events = %#v", store.events)
+	}
+}
+
 func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<rss><channel>
@@ -40,6 +60,12 @@ type refreshStore struct {
 	feed   core.Feed
 	items  []core.Item
 	events []core.Event
+}
+
+func (s *refreshStore) CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {
+	feed.ID = "feed-1"
+	s.feed = feed
+	return feed, nil
 }
 
 func (s *refreshStore) FindFeed(ctx context.Context, id string) (core.Feed, error) {
