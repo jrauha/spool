@@ -19,7 +19,7 @@
     <ul class="item-list">
     {{range .Items}}
       <li class="item-row">
-        <p class="item-source">{{index $.FeedNames .FeedID}}{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
+        <p class="item-source"><a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
         <a class="item-title" href="{{.URL}}">{{.Title}}</a>
         {{if .Summary}}<div class="item-summary">{{richText .Summary}}</div>{{end}}
       </li>
