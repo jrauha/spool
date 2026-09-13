@@ -12,6 +12,7 @@ type ParsedFeed struct {
 	Title       string
 	Description string
 	SiteURL     string
+	IconURL     string
 	Items       []ParsedItem
 }
 
@@ -55,7 +56,12 @@ type rssChannel struct {
 	Title       string    `xml:"title"`
 	Description string    `xml:"description"`
 	Link        string    `xml:"link"`
+	Image       rssImage  `xml:"image"`
 	Items       []rssItem `xml:"item"`
+}
+
+type rssImage struct {
+	URL string `xml:"url"`
 }
 
 type rssItem struct {
@@ -77,6 +83,7 @@ func parseRSS(data []byte) (ParsedFeed, error) {
 		Title:       clean(doc.Channel.Title),
 		Description: clean(doc.Channel.Description),
 		SiteURL:     clean(doc.Channel.Link),
+		IconURL:     clean(doc.Channel.Image.URL),
 		Items:       make([]ParsedItem, 0, len(doc.Channel.Items)),
 	}
 	for _, entry := range doc.Channel.Items {
@@ -96,6 +103,7 @@ type atomDocument struct {
 	Title    string      `xml:"title"`
 	Subtitle string      `xml:"subtitle"`
 	Links    []atomLink  `xml:"link"`
+	Icon     string      `xml:"icon"`
 	Entries  []atomEntry `xml:"entry"`
 }
 
@@ -129,6 +137,7 @@ func parseAtom(data []byte) (ParsedFeed, error) {
 		Title:       clean(doc.Title),
 		Description: clean(doc.Subtitle),
 		SiteURL:     atomURL(doc.Links),
+		IconURL:     clean(doc.Icon),
 		Items:       make([]ParsedItem, 0, len(doc.Entries)),
 	}
 	for _, entry := range doc.Entries {

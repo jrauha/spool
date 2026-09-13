@@ -11,6 +11,7 @@ type Feed struct {
 	Title       string
 	Description string
 	SiteURL     string
+	IconURL     string
 	RefreshedAt *time.Time
 	LastError   string
 	CreatedAt   time.Time

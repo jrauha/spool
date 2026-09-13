@@ -24,29 +24,29 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 
 func (s *PostgresStore) CreateFeed(ctx context.Context, feed Feed) (Feed, error) {
 	row := s.db.QueryRowContext(ctx, `
-		INSERT INTO feeds (url, title, description, site_url)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id::text, url, title, description, site_url, refreshed_at,
+		INSERT INTO feeds (url, title, description, site_url, icon_url)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id::text, url, title, description, site_url, icon_url, refreshed_at,
 			last_error, created_at, updated_at
-	`, feed.URL, feed.Title, feed.Description, feed.SiteURL)
+	`, feed.URL, feed.Title, feed.Description, feed.SiteURL, feed.IconURL)
 	return scanFeed(row)
 }
 
 func (s *PostgresStore) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
 	row := s.db.QueryRowContext(ctx, `
 		UPDATE feeds
-		SET title = $2, description = $3, site_url = $4, refreshed_at = $5,
-			last_error = $6, updated_at = now()
+		SET title = $2, description = $3, site_url = $4, icon_url = $5,
+			refreshed_at = $6, last_error = $7, updated_at = now()
 		WHERE id = $1
-		RETURNING id::text, url, title, description, site_url, refreshed_at,
+		RETURNING id::text, url, title, description, site_url, icon_url, refreshed_at,
 			last_error, created_at, updated_at
-	`, feed.ID, feed.Title, feed.Description, feed.SiteURL, feed.RefreshedAt, feed.LastError)
+	`, feed.ID, feed.Title, feed.Description, feed.SiteURL, feed.IconURL, feed.RefreshedAt, feed.LastError)
 	return scanFeed(row)
 }
 
 func (s *PostgresStore) FindFeed(ctx context.Context, id string) (Feed, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id::text, url, title, description, site_url, refreshed_at,
+		SELECT id::text, url, title, description, site_url, icon_url, refreshed_at,
 			last_error, created_at, updated_at
 		FROM feeds
 		WHERE id = $1
@@ -56,7 +56,7 @@ func (s *PostgresStore) FindFeed(ctx context.Context, id string) (Feed, error) {
 
 func (s *PostgresStore) ListFeeds(ctx context.Context) ([]Feed, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id::text, url, title, description, site_url, refreshed_at,
+		SELECT id::text, url, title, description, site_url, icon_url, refreshed_at,
 			last_error, created_at, updated_at
 		FROM feeds
 		ORDER BY title, id
@@ -283,6 +283,7 @@ func scanFeed(row feedScanner) (Feed, error) {
 		&feed.Title,
 		&feed.Description,
 		&feed.SiteURL,
+		&feed.IconURL,
 		&feed.RefreshedAt,
 		&feed.LastError,
 		&feed.CreatedAt,

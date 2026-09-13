@@ -24,6 +24,7 @@ func TestPostgresStoreFeeds(t *testing.T) {
 		Title:       "Example",
 		Description: "Example feed",
 		SiteURL:     "https://example.com",
+		IconURL:     "https://example.com/favicon.ico",
 	})
 	if err != nil {
 		t.Fatalf("CreateFeed returned error: %v", err)
@@ -36,7 +37,7 @@ func TestPostgresStoreFeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindFeed returned error: %v", err)
 	}
-	if found.URL != created.URL || found.Title != created.Title {
+	if found.URL != created.URL || found.Title != created.Title || found.IconURL != created.IconURL {
 		t.Fatalf("feed = %#v, want %#v", found, created)
 	}
 

@@ -51,6 +51,7 @@ a:visited { color: var(--color-link-visited); }
 .item-row, .feed-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-rule); }
 .item-source { margin-top: 0; margin-bottom: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
 .item-source a, .item-source a:visited { color: var(--color-source); }
+.feed-icon { width: 1em; height: 1em; margin-right: var(--space-1); vertical-align: -0.15em; }
 .item-title, .feed-title { font-weight: 700; }
 .item-summary, .feed-description { margin-top: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
 .item-summary { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: var(--summary-lines); line-clamp: var(--summary-lines); }

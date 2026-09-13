@@ -113,6 +113,7 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 	}
 	feed.Description = parsed.Description
 	feed.SiteURL = parsed.SiteURL
+	feed.IconURL = parsed.IconURL
 	feed.LastError = ""
 	now := time.Now().UTC()
 	feed.RefreshedAt = &now

@@ -59,6 +59,7 @@ type pageData struct {
 	Feed         *core.Feed
 	Feeds        []core.Feed
 	FeedNames    map[string]string
+	FeedIcons    map[string]string
 	Items        []core.Item
 	Page         int
 	PreviousPage int
@@ -139,6 +140,16 @@ func feedNames(feeds []core.Feed) map[string]string {
 	return names
 }
 
+func feedIcons(feeds []core.Feed) map[string]string {
+	icons := make(map[string]string, len(feeds))
+	for _, feed := range feeds {
+		if feed.IconURL != "" {
+			icons[feed.ID] = feed.IconURL
+		}
+	}
+	return icons
+}
+
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -175,6 +186,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data.FeedNames = feedNames(data.Feeds)
+	data.FeedIcons = feedIcons(data.Feeds)
 	a.renderPage(w, r, "home.html", data)
 }
 
