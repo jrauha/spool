@@ -49,8 +49,6 @@ a:visited { color: var(--color-link-visited); }
 
 .item-list, .feed-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--color-rule); }
 .item-row, .feed-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-rule); }
-.item-row::before { content: ">"; float: left; width: var(--space-4); color: var(--color-focus); }
-.item-row > * { margin-left: var(--space-4); }
 .item-source { margin-top: 0; margin-bottom: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
 .item-source a, .item-source a:visited { color: var(--color-source); }
 .item-title, .feed-title { font-weight: 700; }
