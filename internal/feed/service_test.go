@@ -26,6 +26,20 @@ func TestAddCreatesFeedAndQueuesRefresh(t *testing.T) {
 	}
 }
 
+func TestFallbackIconURL(t *testing.T) {
+	for _, test := range []struct {
+		siteURL string
+		want    string
+	}{
+		{siteURL: "https://example.com/posts", want: "https://example.com/favicon.ico"},
+		{siteURL: "not a URL", want: ""},
+	} {
+		if got := fallbackIconURL(test.siteURL); got != test.want {
+			t.Fatalf("fallbackIconURL(%q) = %q, want %q", test.siteURL, got, test.want)
+		}
+	}
+}
+
 func TestQueueRefresh(t *testing.T) {
 	store := &refreshStore{feed: core.Feed{ID: "feed-1"}}
 	svc := NewService(store, nil)

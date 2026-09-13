@@ -114,6 +114,9 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 	feed.Description = parsed.Description
 	feed.SiteURL = parsed.SiteURL
 	feed.IconURL = parsed.IconURL
+	if feed.IconURL == "" {
+		feed.IconURL = fallbackIconURL(feed.SiteURL)
+	}
 	feed.LastError = ""
 	now := time.Now().UTC()
 	feed.RefreshedAt = &now
@@ -148,6 +151,17 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+func fallbackIconURL(siteURL string) string {
+	parsedURL, err := url.ParseRequestURI(siteURL)
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return ""
+	}
+	parsedURL.Path = "/favicon.ico"
+	parsedURL.RawQuery = ""
+	parsedURL.Fragment = ""
+	return parsedURL.String()
 }
 
 func (s *Service) recordError(ctx context.Context, feed core.Feed, refreshErr error) error {
