@@ -16,8 +16,8 @@ func TestFromEnvUsesDefaults(t *testing.T) {
 	if cfg.DatabaseURL != "" {
 		t.Fatalf("DatabaseURL = %q, want empty", cfg.DatabaseURL)
 	}
-	if !cfg.CookieSecure {
-		t.Fatal("CookieSecure = false, want true")
+	if cfg.CookieSecure {
+		t.Fatal("CookieSecure = true, want false")
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 const (
 	DefaultAddr         = ":8080"
 	DefaultSpoolHome    = ".spool"
-	DefaultCookieSecure = true
+	DefaultCookieSecure = false
 )
 
 type Config struct {
