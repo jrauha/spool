@@ -1,0 +1,7 @@
+.git
+.env
+.spool
+bin
+dist
+tmp
+coverage.out
