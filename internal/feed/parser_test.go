@@ -8,8 +8,8 @@ import (
 
 func TestParseRSS(t *testing.T) {
 	parsed, err := Parse(strings.NewReader(`<?xml version="1.0"?>
-<rss version="2.0"><channel>
-  <title>Example</title><description>News</description><link>https://example.com</link>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+  <title>Example</title><description>News</description><link>https://example.com</link><atom:link href="https://example.com/rss" rel="self"/>
   <image><url>https://example.com/favicon.ico</url></image>
   <item><guid>one</guid><title>First</title><link>https://example.com/one</link>
     <description>Summary</description><author>Author</author><pubDate>Mon, 02 Jan 2006 15:04:05 MST</pubDate>
