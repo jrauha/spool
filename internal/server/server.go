@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -140,6 +141,27 @@ func feedNames(feeds []core.Feed) map[string]string {
 	return names
 }
 
+func displayIconURL(feed core.Feed) string {
+	if feed.IconURL != "" {
+		return feed.IconURL
+	}
+	parsedURL, err := url.ParseRequestURI(feed.SiteURL)
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return ""
+	}
+	parsedURL.Path = "/favicon.ico"
+	parsedURL.RawQuery = ""
+	parsedURL.Fragment = ""
+	return parsedURL.String()
+}
+
+func withDisplayIcons(feeds []core.Feed) []core.Feed {
+	for index := range feeds {
+		feeds[index].IconURL = displayIconURL(feeds[index])
+	}
+	return feeds
+}
+
 func feedIcons(feeds []core.Feed) map[string]string {
 	icons := make(map[string]string, len(feeds))
 	for _, feed := range feeds {
@@ -171,6 +193,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 			return
 		}
+		data.Feeds = withDisplayIcons(data.Feeds)
 		data.Items, err = a.feeds.Latest(r.Context(), latestItemLimit+1, (page-firstPage)*latestItemLimit)
 		if err != nil {
 			http.Error(w, "items unavailable", http.StatusInternalServerError)
@@ -200,6 +223,7 @@ func (a *App) feedList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 			return
 		}
+		data.Feeds = withDisplayIcons(data.Feeds)
 	}
 	a.renderPage(w, r, "feeds.html", data)
 }
@@ -218,6 +242,7 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed unavailable", http.StatusInternalServerError)
 		return
 	}
+	feed.IconURL = displayIconURL(feed)
 	items, err := a.feeds.Items(r.Context(), feed.ID)
 	if err != nil {
 		http.Error(w, "items unavailable", http.StatusInternalServerError)

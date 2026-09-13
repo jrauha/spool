@@ -14,12 +14,20 @@ import (
 	"time"
 
 	"github.com/spool-reader/spool/internal/auth"
+	"github.com/spool-reader/spool/internal/core"
 )
 
 const (
 	testEmail = "user@example.com"
 	testPass  = "password123"
 )
+
+func TestDisplayIconURL(t *testing.T) {
+	feed := core.Feed{SiteURL: "https://lobste.rs/"}
+	if got := displayIconURL(feed); got != "https://lobste.rs/favicon.ico" {
+		t.Fatalf("displayIconURL = %q", got)
+	}
+}
 
 func TestFormatDate(t *testing.T) {
 	date := time.Date(2026, time.September, 13, 0, 0, 0, 0, time.UTC)
