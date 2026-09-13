@@ -8,7 +8,7 @@ WITH inserted AS (
             'https://go.dev/blog/'
         ),
         (
-            'https://www.postgresql.org/rss/news.xml',
+            'https://www.postgresql.org/news.rss',
             'PostgreSQL News',
             'News from the PostgreSQL project.',
             'https://www.postgresql.org/'
