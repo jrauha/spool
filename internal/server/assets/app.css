@@ -70,7 +70,7 @@ a:visited { color: var(--color-link-visited); }
 
 input { width: 100%; min-width: 0; padding: 0.4rem 0.5rem; color: var(--color-ink); background: #161b22; border: 1px solid var(--color-rule); border-radius: 0; font: inherit; }
 input:focus { outline: 1px solid var(--color-focus); border-color: var(--color-focus); }
-button { padding: 0.35rem 0.5rem; border: 1px solid var(--color-rule); border-radius: 0; background: transparent; color: var(--color-link); font: inherit; cursor: pointer; }
+button { padding: 0.35rem 0.5rem; border: 1px solid var(--color-rule); border-radius: 0; background: transparent; color: var(--color-link); font: inherit; white-space: nowrap; cursor: pointer; }
 button::before { content: "["; } button::after { content: "]"; }
 button:hover { border-color: var(--color-link); color: var(--color-ink); }
 .link-button { padding: 0; border: 0; color: var(--color-link); text-decoration: underline; }
