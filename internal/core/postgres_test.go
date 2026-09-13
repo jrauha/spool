@@ -39,6 +39,17 @@ func TestPostgresStoreFeeds(t *testing.T) {
 		t.Fatalf("feed = %#v, want %#v", found, created)
 	}
 
+	refreshedAt := time.Now().UTC()
+	created.Title = "Updated"
+	created.RefreshedAt = &refreshedAt
+	updated, err := store.UpdateFeed(ctx, created)
+	if err != nil {
+		t.Fatalf("UpdateFeed returned error: %v", err)
+	}
+	if updated.Title != "Updated" || updated.RefreshedAt == nil {
+		t.Fatalf("feed = %#v, want updated feed", updated)
+	}
+
 	feeds, err := store.ListFeeds(ctx)
 	if err != nil {
 		t.Fatalf("ListFeeds returned error: %v", err)

@@ -30,6 +30,18 @@ func (s *PostgresStore) CreateFeed(ctx context.Context, feed Feed) (Feed, error)
 	return scanFeed(row)
 }
 
+func (s *PostgresStore) UpdateFeed(ctx context.Context, feed Feed) (Feed, error) {
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE feeds
+		SET title = $2, description = $3, site_url = $4, refreshed_at = $5,
+			last_error = $6, updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, url, title, description, site_url, refreshed_at,
+			last_error, created_at, updated_at
+	`, feed.ID, feed.Title, feed.Description, feed.SiteURL, feed.RefreshedAt, feed.LastError)
+	return scanFeed(row)
+}
+
 func (s *PostgresStore) FindFeed(ctx context.Context, id string) (Feed, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id::text, url, title, description, site_url, refreshed_at,
