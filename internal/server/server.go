@@ -25,6 +25,9 @@ const (
 //go:embed templates/*.html
 var templateFiles embed.FS
 
+//go:embed assets/app.css
+var appCSS []byte
+
 var templates = template.Must(template.ParseFS(templateFiles, "templates/*.html"))
 
 type contextKey string
@@ -61,6 +64,7 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	app := &App{auth: authSvc, feeds: feedSvc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /assets/app.css", stylesheet)
 	mux.HandleFunc("GET /setup", app.setupForm)
 	mux.HandleFunc("POST /setup", app.setup)
 	mux.HandleFunc("GET /login", app.loginForm)
@@ -72,6 +76,11 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 
 	return requestLogger(log, mux)
+}
+
+func stylesheet(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(appCSS)
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

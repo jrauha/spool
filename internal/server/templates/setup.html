@@ -1,9 +1,24 @@
 <!doctype html>
-<title>Set up Spool</title>
-<h1>Set up Spool</h1>
-<form method="post" action="/setup">
-  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-  <label>Email <input name="email" type="email" required></label>
-  <label>Password <input name="password" type="password" required></label>
-  <button>Set up</button>
-</form>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up · Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell auth">
+  <header class="topbar"><span class="brand">Spool</span></header>
+  <main>
+    <h1>Set up</h1>
+    <p class="muted">Create the local administrator account.</p>
+    <form method="post" action="/setup">
+      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+      <label>Email <input name="email" type="email" autocomplete="email" required></label>
+      <label>Password <input name="password" type="password" autocomplete="new-password" required></label>
+      <button>Create account</button>
+    </form>
+  </main>
+</div>
+</body>
+</html>

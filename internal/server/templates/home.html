@@ -1,40 +1,53 @@
 <!doctype html>
-<title>Spool</title>
-<h1>Spool</h1>
-<p>Signed in as {{.Email}}</p>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="/">Spool</a>
+    <nav class="nav"><a href="#latest">latest</a><a href="#feeds">feeds</a></nav>
+    <div class="account">{{.Email}} · <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button>log out</button></form></div>
+  </header>
+  <main>
+    <h1>Latest</h1>
+    <ol id="latest" class="item-list">
+    {{range .Items}}
+      <li>
+        <a class="item-title" href="{{.URL}}">{{.Title}}</a>
+        {{if .Summary}}<p class="item-summary">{{.Summary}}</p>{{end}}
+      </li>
+    {{else}}
+      <li class="empty">No items yet. Add a feed or wait for a refresh.</li>
+    {{end}}
+    </ol>
 
-<h2>Add feed</h2>
-<form method="post" action="/feeds">
-  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-  <label>Feed URL <input name="url" type="url" required></label>
-  <button>Add</button>
-</form>
+    <h2 id="feeds">Feeds</h2>
+    <ol class="feed-list">
+    {{range .Feeds}}
+      <li><div class="feed-row">
+        <a href="/feeds/{{.ID}}">{{.Title}}</a>
+        <form class="inline" method="post" action="/feeds/{{.ID}}/refresh">
+          <input name="csrf_token" type="hidden" value="{{$.CSRFToken}}">
+          <button>refresh</button>
+        </form>
+      </div></li>
+    {{else}}
+      <li class="empty">No feeds yet.</li>
+    {{end}}
+    </ol>
 
-<h2>Feeds</h2>
-<ul>
-{{range .Feeds}}
-  <li>
-    <a href="/feeds/{{.ID}}">{{.Title}}</a>
-    <form method="post" action="/feeds/{{.ID}}/refresh">
-      <input name="csrf_token" type="hidden" value="{{$.CSRFToken}}">
-      <button>Refresh</button>
+    <h2>Add feed</h2>
+    <form class="form-row" method="post" action="/feeds">
+      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+      <label>Feed URL <input name="url" type="url" placeholder="https://example.com/feed.xml" required></label>
+      <button>Add feed</button>
     </form>
-  </li>
-{{else}}
-  <li>No feeds yet.</li>
-{{end}}
-</ul>
-
-<h2>Latest items</h2>
-<ul>
-{{range .Items}}
-  <li><a href="{{.URL}}">{{.Title}}</a></li>
-{{else}}
-  <li>No items yet.</li>
-{{end}}
-</ul>
-
-<form method="post" action="/logout">
-  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-  <button>Log out</button>
-</form>
+  </main>
+</div>
+</body>
+</html>

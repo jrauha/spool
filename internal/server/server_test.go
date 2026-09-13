@@ -21,6 +21,20 @@ const (
 	testPass  = "password123"
 )
 
+func TestStylesheet(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, nil, nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
+		t.Fatalf("content type = %q", got)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()

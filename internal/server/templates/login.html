@@ -1,9 +1,23 @@
 <!doctype html>
-<title>Log in</title>
-<h1>Log in</h1>
-<form method="post" action="/login">
-  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-  <label>Email <input name="email" type="email" required></label>
-  <label>Password <input name="password" type="password" required></label>
-  <button>Log in</button>
-</form>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell auth">
+  <header class="topbar"><span class="brand">Spool</span></header>
+  <main>
+    <h1>Log in</h1>
+    <form method="post" action="/login">
+      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+      <label>Email <input name="email" type="email" autocomplete="email" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Log in</button>
+    </form>
+  </main>
+</div>
+</body>
+</html>

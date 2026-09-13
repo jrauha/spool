@@ -1,20 +1,40 @@
 <!doctype html>
-<title>{{.Feed.Title}} · Spool</title>
-<p><a href="/">Spool</a></p>
-<h1>{{.Feed.Title}}</h1>
-{{if .Feed.Description}}<p>{{.Feed.Description}}</p>{{end}}
-{{if .Feed.SiteURL}}<p><a href="{{.Feed.SiteURL}}">Site</a></p>{{end}}
-{{if .Feed.LastError}}<p>Last refresh error: {{.Feed.LastError}}</p>{{end}}
-<form method="post" action="/feeds/{{.Feed.ID}}/refresh">
-  <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
-  <button>Refresh</button>
-</form>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Feed.Title}} · Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="/">Spool</a>
+    <nav class="nav"><a href="/">latest</a><a href="/">feeds</a></nav>
+    <span class="account">{{.Email}}</span>
+  </header>
+  <main>
+    <h1>{{.Feed.Title}}</h1>
+    {{if .Feed.Description}}<p>{{.Feed.Description}}</p>{{end}}
+    {{if .Feed.SiteURL}}<p class="muted"><a href="{{.Feed.SiteURL}}">Visit site</a></p>{{end}}
+    {{if .Feed.LastError}}<p class="notice">Last refresh failed: {{.Feed.LastError}}</p>{{end}}
+    <form class="inline" method="post" action="/feeds/{{.Feed.ID}}/refresh">
+      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+      <button>Refresh</button>
+    </form>
 
-<h2>Items</h2>
-<ul>
-{{range .Items}}
-  <li><a href="{{.URL}}">{{.Title}}</a></li>
-{{else}}
-  <li>No items yet.</li>
-{{end}}
-</ul>
+    <h2>Items</h2>
+    <ol class="item-list">
+    {{range .Items}}
+      <li>
+        <a class="item-title" href="{{.URL}}">{{.Title}}</a>
+        {{if .Summary}}<p class="item-summary">{{.Summary}}</p>{{end}}
+      </li>
+    {{else}}
+      <li class="empty">No items yet.</li>
+    {{end}}
+    </ol>
+  </main>
+</div>
+</body>
+</html>
