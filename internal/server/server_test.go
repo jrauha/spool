@@ -82,6 +82,18 @@ func TestTemplatesExposePluginSlots(t *testing.T) {
 	}
 }
 
+func TestReadingTemplatesExposeFeedSidebar(t *testing.T) {
+	for _, path := range []string{"templates/home.html", "templates/feed.html"} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if !strings.Contains(string(content), `class="feed-sidebar"`) {
+			t.Fatalf("template %q has no feed sidebar", path)
+		}
+	}
+}
+
 func TestStylesheet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	rec := httptest.NewRecorder()
@@ -93,6 +105,26 @@ func TestStylesheet(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
 		t.Fatalf("content type = %q", got)
+	}
+}
+
+func TestStylesheetConstrainsEmbeddedImages(t *testing.T) {
+	stylesheet := string(appCSS)
+
+	for _, want := range []string{".item-summary img", ".feed-description img", "max-width: 100%", "height: auto"} {
+		if !strings.Contains(stylesheet, want) {
+			t.Fatalf("stylesheet missing %q", want)
+		}
+	}
+}
+
+func TestStylesheetHidesSidebarOnMobile(t *testing.T) {
+	stylesheet := string(appCSS)
+
+	for _, want := range []string{".feed-sidebar", "@media (max-width: 640px)", "display: none"} {
+		if !strings.Contains(stylesheet, want) {
+			t.Fatalf("stylesheet missing %q", want)
+		}
 	}
 }
 

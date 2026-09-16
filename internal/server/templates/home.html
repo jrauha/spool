@@ -13,6 +13,11 @@
     <nav aria-label="Main navigation"><a aria-current="page" href="/">Reading</a><a href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
   </header>
+  <div class="app-layout">
+  <aside class="feed-sidebar" aria-label="Feeds">
+    <h2>Feeds</h2>
+    <nav>{{range .Feeds}}<a href="/feeds/{{.ID}}">{{if .IconURL}}<img class="feed-icon" src="{{.IconURL}}" alt="">{{end}}{{.Title}}</a>{{else}}<span>No feeds yet.</span>{{end}}</nav>
+  </aside>
   <main id="spool-main" class="reading-column" data-ui-region="reading-list">
     <header class="page-heading" data-ui-region="page-header"><h1>Latest</h1><p>New items from your feeds.</p></header>
     <div class="plugin-slot plugin-slot--page" data-plugin-slot="page.after-header"></div>
@@ -38,6 +43,7 @@
     </nav>
     {{end}}
   </main>
+  </div>
 </div>
 </body>
 </html>

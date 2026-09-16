@@ -281,13 +281,18 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	page := pageNumber(r)
 	feed.IconURL = displayIconURL(feed)
+	feeds, err := a.feeds.ListFeeds(r.Context())
+	if err != nil {
+		http.Error(w, "feeds unavailable", http.StatusInternalServerError)
+		return
+	}
 	items, err := a.feeds.Items(r.Context(), feed.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
 	if err != nil {
 		http.Error(w, "items unavailable", http.StatusInternalServerError)
 		return
 	}
 	user, _ := r.Context().Value(userContextKey).(auth.User)
-	data := pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Items: items, Page: page}
+	data := pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Feeds: withDisplayIcons(feeds), Items: items, Page: page}
 	if len(data.Items) > itemsPerPage {
 		data.Items = data.Items[:itemsPerPage]
 		data.HasNextPage = true
