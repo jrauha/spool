@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: spool
+      POSTGRES_PASSWORD: spool
+      POSTGRES_DB: spool
+    ports:
+      - "5432:5432"
+    volumes:
+      - spool-postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spool -d spool"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  spool-postgres-data:
