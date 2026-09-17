@@ -36,11 +36,22 @@ func (e permanentRefreshError) Permanent() bool {
 
 type Store interface {
 	CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
+	FindOrCreateFeed(ctx context.Context, feed core.Feed) (core.Feed, bool, error)
+	CreateSubscription(ctx context.Context, userID, feedID string) error
 	DeleteFeed(ctx context.Context, id string) error
+	DeleteSubscription(ctx context.Context, userID, feedID string) error
 	FindFeed(ctx context.Context, id string) (core.Feed, error)
+	FindFeedForUser(ctx context.Context, userID, feedID string) (core.Feed, error)
 	ListFeeds(ctx context.Context) ([]core.Feed, error)
+	ListFeedsForUser(ctx context.Context, userID string) ([]core.Feed, error)
 	ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error)
+	ListItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error)
 	ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error)
+	ListLatestItemsForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error)
+	MarkItemRead(ctx context.Context, userID, itemID string) error
+	MarkItemUnread(ctx context.Context, userID, itemID string) error
+	MarkFeedRead(ctx context.Context, userID, feedID string) error
+	MarkAllRead(ctx context.Context, userID string) error
 	EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
@@ -63,20 +74,64 @@ func (s *Service) ListFeeds(ctx context.Context) ([]core.Feed, error) {
 	return s.store.ListFeeds(ctx)
 }
 
+func (s *Service) ListFeedsForUser(ctx context.Context, userID string) ([]core.Feed, error) {
+	return s.store.ListFeedsForUser(ctx, userID)
+}
+
 func (s *Service) Find(ctx context.Context, id string) (core.Feed, error) {
 	return s.store.FindFeed(ctx, id)
+}
+
+func (s *Service) FindForUser(ctx context.Context, userID, id string) (core.Feed, error) {
+	return s.store.FindFeedForUser(ctx, userID, id)
 }
 
 func (s *Service) Latest(ctx context.Context, limit, offset int) ([]core.Item, error) {
 	return s.store.ListLatestItems(ctx, limit, offset)
 }
 
+func (s *Service) LatestForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error) {
+	return s.store.ListLatestItemsForUser(ctx, userID, limit, offset)
+}
+
 func (s *Service) Items(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
 	return s.store.ListItems(ctx, feedID, limit, offset)
 }
 
-func (s *Service) Delete(ctx context.Context, id string) error {
-	if err := s.store.DeleteFeed(ctx, id); err != nil {
+func (s *Service) ItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error) {
+	return s.store.ListItemsForUser(ctx, userID, feedID, limit, offset)
+}
+
+func (s *Service) MarkRead(ctx context.Context, userID, itemID string) error {
+	if err := s.store.MarkItemRead(ctx, userID, itemID); err != nil {
+		return err
+	}
+	return s.appendEvent(ctx, core.EventItemRead, "item", itemID)
+}
+
+func (s *Service) MarkUnread(ctx context.Context, userID, itemID string) error {
+	if err := s.store.MarkItemUnread(ctx, userID, itemID); err != nil {
+		return err
+	}
+	return s.appendEvent(ctx, core.EventItemUnread, "item", itemID)
+}
+
+func (s *Service) MarkFeedRead(ctx context.Context, userID, feedID string) error {
+	if err := s.store.MarkFeedRead(ctx, userID, feedID); err != nil {
+		return err
+	}
+	return s.appendEvent(ctx, core.EventFeedRead, "feed", feedID)
+}
+
+func (s *Service) MarkAllRead(ctx context.Context, userID string) error {
+	if err := s.store.MarkAllRead(ctx, userID); err != nil {
+		return err
+	}
+	return s.appendEvent(ctx, core.EventFeedsRead, "user", userID)
+}
+
+func (s *Service) Delete(ctx context.Context, userID, id string) error {
+	if err := s.store.DeleteSubscription(ctx, userID, id); err != nil {
 		return err
 	}
 	return s.appendEvent(ctx, core.EventFeedDeleted, "feed", id)
@@ -89,14 +144,17 @@ func (s *Service) QueueRefresh(ctx context.Context, id string) error {
 	return s.store.EnqueueRefresh(ctx, id, time.Now().UTC())
 }
 
-func (s *Service) Add(ctx context.Context, rawURL string) (core.Feed, error) {
+func (s *Service) Add(ctx context.Context, userID, rawURL string) (core.Feed, error) {
 	parsedURL, err := url.ParseRequestURI(rawURL)
 	if err != nil || !validFeedURL(parsedURL) {
 		return core.Feed{}, fmt.Errorf("invalid feed URL")
 	}
 
-	feed, err := s.store.CreateFeed(ctx, core.Feed{URL: rawURL, Title: rawURL})
+	feed, _, err := s.store.FindOrCreateFeed(ctx, core.Feed{URL: rawURL, Title: rawURL})
 	if err != nil {
+		return core.Feed{}, err
+	}
+	if err := s.store.CreateSubscription(ctx, userID, feed.ID); err != nil {
 		return core.Feed{}, err
 	}
 	if err := s.appendEvent(ctx, core.EventFeedAdded, "feed", feed.ID); err != nil {

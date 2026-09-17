@@ -5,7 +5,6 @@
   --color-ink: #c9d1d9;
   --color-muted: #8b949e;
   --color-link: #58a6ff;
-  --color-link-visited: #bc8cff;
   --color-source: #8b949e;
   --color-rule: #30363d;
   --color-notice: #1f3b2c;
@@ -27,7 +26,6 @@
 body { margin: 0; background: var(--color-page); color: var(--color-ink); font: 0.8125rem/1.5 var(--font-ui); }
 a { color: var(--color-link); text-decoration: none; }
 a:hover { text-decoration: underline; }
-a:visited { color: var(--color-link-visited); }
 
 .app-shell { width: min(calc(var(--reading-width) + var(--sidebar-width) + var(--space-6)), calc(100% - 2 * var(--space-4))); margin: 0 auto; }
 .app-layout { display: grid; grid-template-columns: var(--sidebar-width) minmax(0, var(--reading-width)); gap: var(--space-6); align-items: start; }
@@ -57,8 +55,10 @@ a:visited { color: var(--color-link-visited); }
 .item-list, .feed-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--color-rule); }
 .item-row, .feed-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-rule); }
 .item-source { margin-top: 0; margin-bottom: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
-.item-source a, .item-source a:visited { color: var(--color-source); }
+.item-source a { color: var(--color-source); }
 .feed-icon { width: 1em; height: 1em; margin-right: var(--space-1); vertical-align: -0.15em; }
+.unread-count { color: var(--color-focus); }
+.item-row--read .item-title { color: var(--color-muted); font-weight: 400; }
 .item-title, .feed-title { font-weight: 700; }
 .item-summary, .feed-description { margin-top: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
 .item-summary { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: var(--summary-lines); line-clamp: var(--summary-lines); }
@@ -67,7 +67,7 @@ a:visited { color: var(--color-link-visited); }
 .item-summary p:first-child, .feed-description p:first-child { margin-top: 0; }
 .plugin-slot:empty { display: none; }
 .plugin-slot { margin-top: var(--space-2); }
-.plugin-slot--item-actions, .plugin-slot--feed-actions { display: flex; gap: var(--space-2); }
+.feed-actions, .plugin-slot--item-actions, .plugin-slot--feed-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 .add-feed { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); padding: var(--space-3); border: 1px solid var(--color-rule); }
 .add-feed label { color: var(--color-muted); font-size: 0.75rem; }

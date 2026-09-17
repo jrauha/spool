@@ -137,11 +137,92 @@ func TestPostgresStoreItems(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreSubscriptionReadState(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+	userID := testUserID(t, database, ctx)
+	if err := store.CreateSubscription(ctx, userID, feed.ID); err != nil {
+		t.Fatalf("CreateSubscription returned error: %v", err)
+	}
+	item, _, err := store.UpsertItem(ctx, Item{FeedID: feed.ID, GUID: "item-read", Title: "Read item"})
+	if err != nil {
+		t.Fatalf("UpsertItem returned error: %v", err)
+	}
+
+	feeds, err := store.ListFeedsForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListFeedsForUser returned error: %v", err)
+	}
+	if len(feeds) != 1 || feeds[0].UnreadCount != 1 {
+		t.Fatalf("feeds = %#v, want unread count", feeds)
+	}
+
+	if err := store.MarkItemRead(ctx, userID, item.ID); err != nil {
+		t.Fatalf("MarkItemRead returned error: %v", err)
+	}
+	feeds, err = store.ListFeedsForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListFeedsForUser returned error: %v", err)
+	}
+	if len(feeds) != 1 || feeds[0].UnreadCount != 0 {
+		t.Fatalf("feeds = %#v, want no unread items", feeds)
+	}
+	items, err := store.ListLatestItemsForUser(ctx, userID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListLatestItemsForUser returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ReadAt == nil {
+		t.Fatalf("items = %#v, want read state", items)
+	}
+
+	if err := store.MarkItemUnread(ctx, userID, item.ID); err != nil {
+		t.Fatalf("MarkItemUnread returned error: %v", err)
+	}
+	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListItemsForUser returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ReadAt != nil {
+		t.Fatalf("items = %#v, want unread state", items)
+	}
+
+	if err := store.MarkFeedRead(ctx, userID, feed.ID); err != nil {
+		t.Fatalf("MarkFeedRead returned error: %v", err)
+	}
+	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListItemsForUser after feed read returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ReadAt == nil {
+		t.Fatalf("items = %#v, want read before state", items)
+	}
+
+	if err := store.MarkItemUnread(ctx, userID, item.ID); err != nil {
+		t.Fatalf("MarkItemUnread after feed read returned error: %v", err)
+	}
+	if err := store.MarkAllRead(ctx, userID); err != nil {
+		t.Fatalf("MarkAllRead returned error: %v", err)
+	}
+	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListItemsForUser after all read returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ReadAt == nil {
+		t.Fatalf("items = %#v, want all read state", items)
+	}
+}
+
 func TestPostgresStoreEnqueueDueRefresh(t *testing.T) {
 	database := openTestDB(t)
 	store := NewPostgresStore(database)
 	ctx := context.Background()
 	feed := testFeed(t, store, ctx)
+	userID := testUserID(t, database, ctx)
+	if err := store.CreateSubscription(ctx, userID, feed.ID); err != nil {
+		t.Fatalf("CreateSubscription returned error: %v", err)
+	}
 
 	queued, err := store.EnqueueDueRefresh(ctx, time.Hour)
 	if err != nil {
@@ -230,6 +311,19 @@ func TestPostgresStoreEvents(t *testing.T) {
 	if payload["url"] != "https://example.com/feed.xml" {
 		t.Fatalf("payload = %s", event.Payload)
 	}
+}
+
+func testUserID(t *testing.T, database *sql.DB, ctx context.Context) string {
+	t.Helper()
+
+	var id string
+	err := database.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id::text
+	`, "reader@example.com", "hash").Scan(&id)
+	if err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	return id
 }
 
 func testFeed(t *testing.T, store *PostgresStore, ctx context.Context) Feed {

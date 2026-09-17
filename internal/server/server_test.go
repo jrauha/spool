@@ -39,6 +39,18 @@ func TestFormatDate(t *testing.T) {
 	}
 }
 
+func TestRedirectTargetUsesReturnTo(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=%2Ffeeds%2Ffeed-1%3Fpage%3D2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := redirectTarget(req); got != "/feeds/feed-1?page=2" {
+		t.Fatalf("redirectTarget = %q", got)
+	}
+}
+
 func TestPageNumber(t *testing.T) {
 	for _, test := range []struct {
 		path string
@@ -94,6 +106,48 @@ func TestReadingTemplatesExposeFeedSidebar(t *testing.T) {
 	}
 }
 
+func TestFeedTemplatesExposeUnreadCounts(t *testing.T) {
+	for _, path := range []string{"templates/home.html", "templates/feed.html", "templates/feeds.html"} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if !strings.Contains(string(content), `class="unread-count"`) {
+			t.Fatalf("template %q has no unread count", path)
+		}
+	}
+}
+
+func TestReadingTemplatesExposeMarkAllRead(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "templates/home.html", want: `action="/items/read"`},
+		{path: "templates/feed.html", want: `action="/feeds/{{.Feed.ID}}/read"`},
+	} {
+		content, err := templateFiles.ReadFile(test.path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", test.path, err)
+		}
+		if !strings.Contains(string(content), test.want) {
+			t.Fatalf("template %q missing %q", test.path, test.want)
+		}
+	}
+}
+
+func TestReadingTemplatesMarkTitleLinksRead(t *testing.T) {
+	for _, path := range []string{"templates/home.html", "templates/feed.html"} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if !strings.Contains(string(content), `data-read-url="/items/{{.ID}}/read"`) {
+			t.Fatalf("template %q title links do not mark read", path)
+		}
+	}
+}
+
 func TestStylesheet(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	rec := httptest.NewRecorder()
@@ -104,6 +158,20 @@ func TestStylesheet(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
+		t.Fatalf("content type = %q", got)
+	}
+}
+
+func TestScript(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, nil, nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
 		t.Fatalf("content type = %q", got)
 	}
 }

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reading · Spool</title>
   <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
 </head>
 <body>
 <div id="spool-app" class="app-shell" data-ui-region="app">
@@ -16,17 +17,17 @@
   <div class="app-layout">
   <aside class="feed-sidebar" aria-label="Feeds">
     <h2>Feeds</h2>
-    <nav>{{range .Feeds}}<a href="/feeds/{{.ID}}">{{if .IconURL}}<img class="feed-icon" src="{{.IconURL}}" alt="">{{end}}{{.Title}}</a>{{else}}<span>No feeds yet.</span>{{end}}</nav>
+    <nav>{{range .Feeds}}<a href="/feeds/{{.ID}}">{{if .IconURL}}<img class="feed-icon" src="{{.IconURL}}" alt="">{{end}}{{.Title}}{{if .UnreadCount}} <span class="unread-count">{{.UnreadCount}}</span>{{end}}</a>{{else}}<span>No feeds yet.</span>{{end}}</nav>
   </aside>
   <main id="spool-main" class="reading-column" data-ui-region="reading-list">
-    <header class="page-heading" data-ui-region="page-header"><h1>Latest</h1><p>New items from your feeds.</p></header>
+    <header class="page-heading feed-heading" data-ui-region="page-header"><div><h1>Latest</h1><p>New items from your feeds.</p></div><form method="post" action="/items/read"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><input name="return_to" type="hidden" value="{{.ReturnTo}}"><button>Mark all read</button></form></header>
     <div class="plugin-slot plugin-slot--page" data-plugin-slot="page.after-header"></div>
     {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
     <ul class="item-list">
     {{range .Items}}
-      <li id="item-{{.ID}}" class="item-row" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
+      <li id="item-{{.ID}}" class="item-row{{if .ReadAt}} item-row--read{{end}}" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
         <p class="item-source" data-ui-region="item-source">{{with index $.FeedIcons .FeedID}}<img class="feed-icon" src="{{.}}" alt="">{{end}}<a href="/feeds/{{.FeedID}}">{{index $.FeedNames .FeedID}}</a>{{with .PublishedAt}} · {{formatDate .}}{{end}}</p>
-        <a class="item-title" data-ui-region="item-title" href="{{.URL}}">{{.Title}}</a>
+        <a class="item-title" data-ui-region="item-title" href="{{.URL}}"{{if not .ReadAt}} data-read-url="/items/{{.ID}}/read" data-csrf-token="{{$.CSRFToken}}"{{end}}>{{.Title}}</a>
         {{if .Summary}}<div class="item-summary" data-ui-region="item-summary">{{richText .Summary}}</div>{{end}}
         <div class="plugin-slot plugin-slot--item-metadata" data-plugin-slot="item.metadata"></div>
         <div class="plugin-slot plugin-slot--item-actions" data-plugin-slot="item.actions"></div>

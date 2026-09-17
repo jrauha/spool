@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -36,6 +37,9 @@ var templateFiles embed.FS
 
 //go:embed assets/app.css
 var appCSS []byte
+
+//go:embed assets/app.js
+var appJS []byte
 
 var richTextPolicy = bluemonday.UGCPolicy()
 
@@ -75,6 +79,7 @@ type pageData struct {
 	PreviousPage int
 	NextPage     int
 	HasNextPage  bool
+	ReturnTo     string
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
@@ -103,6 +108,7 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 	mux.HandleFunc("GET /readyz", app.readyz)
 	mux.HandleFunc("GET /metrics", app.metricsHandler)
 	mux.HandleFunc("GET /assets/app.css", stylesheet)
+	mux.HandleFunc("GET /assets/app.js", script)
 	mux.HandleFunc("GET /setup", app.setupForm)
 	mux.HandleFunc("POST /setup", app.setup)
 	mux.HandleFunc("GET /login", app.loginForm)
@@ -114,6 +120,10 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
 	mux.Handle("POST /feeds/{id}/refresh", app.requireAuth(http.HandlerFunc(app.refreshFeed)))
 	mux.Handle("POST /feeds/{id}/delete", app.requireAuth(http.HandlerFunc(app.deleteFeed)))
+	mux.Handle("POST /feeds/{id}/read", app.requireAuth(http.HandlerFunc(app.markFeedRead)))
+	mux.Handle("POST /items/read", app.requireAuth(http.HandlerFunc(app.markAllRead)))
+	mux.Handle("POST /items/{id}/read", app.requireAuth(http.HandlerFunc(app.markItemRead)))
+	mux.Handle("POST /items/{id}/unread", app.requireAuth(http.HandlerFunc(app.markItemUnread)))
 
 	return securityHeaders(requestLogger(log, mux))
 }
@@ -134,6 +144,11 @@ func stylesheet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(appCSS)
 }
 
+func script(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	_, _ = w.Write(appJS)
+}
+
 func pageNumber(r *http.Request) int {
 	page, err := strconv.Atoi(r.URL.Query().Get("page"))
 	if err != nil || page < firstPage {
@@ -151,6 +166,33 @@ func pageNotice(r *http.Request) string {
 	default:
 		return ""
 	}
+}
+
+func redirectTarget(r *http.Request) string {
+	if target := localRedirectPath(r.FormValue("return_to")); target != "" {
+		return target
+	}
+
+	referrer := r.Header.Get("Referer")
+	parsedURL, err := url.Parse(referrer)
+	if err == nil && parsedURL.IsAbs() && parsedURL.Host == r.Host {
+		return parsedURL.RequestURI()
+	}
+	if target := localRedirectPath(referrer); target != "" {
+		return target
+	}
+	return "/"
+}
+
+func localRedirectPath(value string) string {
+	parsedURL, err := url.Parse(value)
+	if err != nil || parsedURL.IsAbs() {
+		return ""
+	}
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") {
+		return value
+	}
+	return ""
 }
 
 func feedNames(feeds []core.Feed) map[string]string {
@@ -225,13 +267,13 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 	data := pageData{Email: user.Email, Notice: pageNotice(r), Page: page}
 	if a.feeds != nil {
 		var err error
-		data.Feeds, err = a.feeds.ListFeeds(r.Context())
+		data.Feeds, err = a.feeds.ListFeedsForUser(r.Context(), user.ID)
 		if err != nil {
 			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 			return
 		}
 		data.Feeds = withDisplayIcons(data.Feeds)
-		data.Items, err = a.feeds.Latest(r.Context(), itemsPerPage+1, (page-firstPage)*itemsPerPage)
+		data.Items, err = a.feeds.LatestForUser(r.Context(), user.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
 		if err != nil {
 			http.Error(w, "items unavailable", http.StatusInternalServerError)
 			return
@@ -255,7 +297,7 @@ func (a *App) feedList(w http.ResponseWriter, r *http.Request) {
 	data := pageData{Email: user.Email, Notice: pageNotice(r)}
 	if a.feeds != nil {
 		var err error
-		data.Feeds, err = a.feeds.ListFeeds(r.Context())
+		data.Feeds, err = a.feeds.ListFeedsForUser(r.Context(), user.ID)
 		if err != nil {
 			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 			return
@@ -270,7 +312,8 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	feed, err := a.feeds.Find(r.Context(), r.PathValue("id"))
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	feed, err := a.feeds.FindForUser(r.Context(), user.ID, r.PathValue("id"))
 	if errors.Is(err, core.ErrFeedNotFound) {
 		http.NotFound(w, r)
 		return
@@ -281,17 +324,16 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	page := pageNumber(r)
 	feed.IconURL = displayIconURL(feed)
-	feeds, err := a.feeds.ListFeeds(r.Context())
+	feeds, err := a.feeds.ListFeedsForUser(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 		return
 	}
-	items, err := a.feeds.Items(r.Context(), feed.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
+	items, err := a.feeds.ItemsForUser(r.Context(), user.ID, feed.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
 	if err != nil {
 		http.Error(w, "items unavailable", http.StatusInternalServerError)
 		return
 	}
-	user, _ := r.Context().Value(userContextKey).(auth.User)
 	data := pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Feeds: withDisplayIcons(feeds), Items: items, Page: page}
 	if len(data.Items) > itemsPerPage {
 		data.Items = data.Items[:itemsPerPage]
@@ -312,7 +354,8 @@ func (a *App) addFeed(w http.ResponseWriter, r *http.Request) {
 	if !a.parseCSRFForm(w, r) {
 		return
 	}
-	if _, err := a.feeds.Add(r.Context(), r.FormValue("url")); err != nil {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if _, err := a.feeds.Add(r.Context(), user.ID, r.FormValue("url")); err != nil {
 		http.Error(w, "feed add failed", http.StatusBadRequest)
 		return
 	}
@@ -327,7 +370,8 @@ func (a *App) deleteFeed(w http.ResponseWriter, r *http.Request) {
 	if !a.parseCSRFForm(w, r) {
 		return
 	}
-	if err := a.feeds.Delete(r.Context(), r.PathValue("id")); err != nil {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if err := a.feeds.Delete(r.Context(), user.ID, r.PathValue("id")); err != nil {
 		if errors.Is(err, core.ErrFeedNotFound) {
 			http.NotFound(w, r)
 			return
@@ -355,6 +399,82 @@ func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/feeds/"+r.PathValue("id")+"?notice=queued", http.StatusSeeOther)
+}
+
+func (a *App) markFeedRead(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if err := a.feeds.MarkFeedRead(r.Context(), user.ID, r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrFeedNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "mark feed read failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, redirectTarget(r), http.StatusSeeOther)
+}
+
+func (a *App) markAllRead(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if err := a.feeds.MarkAllRead(r.Context(), user.ID); err != nil {
+		http.Error(w, "mark all read failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, redirectTarget(r), http.StatusSeeOther)
+}
+
+func (a *App) markItemRead(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if err := a.feeds.MarkRead(r.Context(), user.ID, r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrItemNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "mark read failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, redirectTarget(r), http.StatusSeeOther)
+}
+
+func (a *App) markItemUnread(w http.ResponseWriter, r *http.Request) {
+	if a.feeds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if err := a.feeds.MarkUnread(r.Context(), user.ID, r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrItemNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "mark unread failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, redirectTarget(r), http.StatusSeeOther)
 }
 
 func (a *App) setupForm(w http.ResponseWriter, r *http.Request) {
@@ -508,6 +628,7 @@ func (a *App) renderPage(w http.ResponseWriter, r *http.Request, name string, da
 		return
 	}
 	data.CSRFToken = token
+	data.ReturnTo = r.URL.RequestURI()
 	render(w, name, data)
 }
 
