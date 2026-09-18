@@ -78,6 +78,57 @@ func TestRichTextSanitizesContent(t *testing.T) {
 	}
 }
 
+func TestRichTextSanitizesActiveContent(t *testing.T) {
+	for _, payload := range []string{
+		`<img src="x" onerror="alert(1)">`,
+		`<a href="javascript:alert(1)">click</a>`,
+		`<svg onload="alert(1)"><circle></circle></svg>`,
+		`<iframe src="https://example.com"></iframe>`,
+	} {
+		got := strings.ToLower(string(richText(payload)))
+		for _, blocked := range []string{"javascript:", "onerror", "onload", "<svg", "<iframe"} {
+			if strings.Contains(got, blocked) {
+				t.Fatalf("richText(%q) = %q, contains %q", payload, got, blocked)
+			}
+		}
+	}
+}
+
+func TestHomeTemplateEscapesFeedContent(t *testing.T) {
+	data := pageData{
+		CSRFToken: "csrf-token",
+		Email:     `<script>alert(1)</script>@example.com`,
+		Feeds: []core.Feed{{
+			ID:      "feed-1",
+			Title:   `<script>alert(1)</script>`,
+			IconURL: `javascript:alert(1)`,
+		}},
+		FeedNames: map[string]string{"feed-1": `<script>alert(1)</script>`},
+		FeedIcons: map[string]string{"feed-1": `javascript:alert(1)`},
+		Items: []core.Item{{
+			ID:      "item-1",
+			FeedID:  "feed-1",
+			URL:     `javascript:alert(1)`,
+			Title:   `<script>alert(1)</script>`,
+			Summary: `<img src="x" onerror="alert(1)"><a href="javascript:alert(2)">bad</a><script>alert(3)</script>`,
+		}},
+		Page: firstPage,
+	}
+	rec := httptest.NewRecorder()
+
+	render(rec, "home.html", data)
+
+	body := strings.ToLower(rec.Body.String())
+	for _, blocked := range []string{"<script>alert", "javascript:alert", "onerror"} {
+		if strings.Contains(body, blocked) {
+			t.Fatalf("rendered home contains %q: %s", blocked, rec.Body.String())
+		}
+	}
+	if !strings.Contains(rec.Body.String(), "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("rendered home does not escape script text: %s", rec.Body.String())
+	}
+}
+
 func TestTemplatesExposePluginSlots(t *testing.T) {
 	for _, path := range []string{
 		"templates/home.html",
