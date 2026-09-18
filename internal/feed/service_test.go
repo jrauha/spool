@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -136,6 +137,62 @@ func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 	}
 }
 
+func TestRefreshRecordsPermanentHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
+	svc := NewService(store, server.Client())
+
+	err := svc.Refresh(context.Background(), store.feed.ID)
+	if err == nil {
+		t.Fatal("Refresh returned nil error")
+	}
+	if !isPermanentRefreshError(err) {
+		t.Fatalf("Refresh error = %v, want permanent error", err)
+	}
+	if errors.Unwrap(err) == nil {
+		t.Fatalf("Refresh error = %T, want wrapped error", err)
+	}
+	if store.feed.LastError == "" {
+		t.Fatal("last error was not recorded")
+	}
+	if len(store.events) != 1 || store.events[0].Name != core.EventFeedError {
+		t.Fatalf("events = %#v, want feed error event", store.events)
+	}
+}
+
+func TestRefreshRecordsParseError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not xml`))
+	}))
+	defer server.Close()
+
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
+	svc := NewService(store, server.Client())
+
+	if err := svc.Refresh(context.Background(), store.feed.ID); err == nil {
+		t.Fatal("Refresh returned nil error")
+	}
+	if store.feed.LastError == "" {
+		t.Fatal("last error was not recorded")
+	}
+	if len(store.events) != 1 || store.events[0].Name != core.EventFeedError {
+		t.Fatalf("events = %#v, want feed error event", store.events)
+	}
+}
+
+func TestSafeDialContextRejectsLocalhost(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	conn, err := safeDialContext(ctx, "tcp", "127.0.0.1:80")
+	if err == nil {
+		conn.Close()
+		t.Fatal("safeDialContext accepted localhost")
+	}
+}
+
 type refreshStore struct {
 	feed                  core.Feed
 	items                 []core.Item
@@ -146,6 +203,7 @@ type refreshStore struct {
 	readItemID            string
 	unreadItemID          string
 	readFeedID            string
+	allReadUserID         string
 }
 
 func (s *refreshStore) CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {
@@ -226,6 +284,7 @@ func (s *refreshStore) MarkFeedRead(ctx context.Context, userID, feedID string) 
 }
 
 func (s *refreshStore) MarkAllRead(ctx context.Context, userID string) error {
+	s.allReadUserID = userID
 	return nil
 }
 

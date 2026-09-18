@@ -15,6 +15,7 @@ import (
 
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/core"
+	"github.com/spool-reader/spool/internal/feed"
 )
 
 const (
@@ -48,6 +49,34 @@ func TestRedirectTargetUsesReturnTo(t *testing.T) {
 
 	if got := redirectTarget(req); got != "/feeds/feed-1?page=2" {
 		t.Fatalf("redirectTarget = %q", got)
+	}
+}
+
+func TestRedirectTargetUsesSafeReferrer(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=https%3A%2F%2Fevil.example%2F"))
+	req.Host = "spool.example"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "https://spool.example/feeds/feed-1?page=2")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := redirectTarget(req); got != "/feeds/feed-1?page=2" {
+		t.Fatalf("redirectTarget = %q", got)
+	}
+}
+
+func TestRedirectTargetRejectsExternalReferrer(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=https%3A%2F%2Fevil.example%2F"))
+	req.Host = "spool.example"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "https://evil.example/feeds")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := redirectTarget(req); got != "/" {
+		t.Fatalf("redirectTarget = %q, want /", got)
 	}
 }
 
@@ -382,6 +411,35 @@ func TestSetupRejectsMissingCSRF(t *testing.T) {
 	}
 }
 
+func TestSetupForm(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/setup", nil)
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, auth.NewService(newServerAuthStore()), nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "Create account") {
+		t.Fatalf("body = %q, want setup form", rec.Body.String())
+	}
+}
+
+func TestSetupRejectsInvalidSetupToken(t *testing.T) {
+	req := csrfFormRequest(http.MethodPost, "/setup", url.Values{
+		"email":       {testEmail},
+		"password":    {testPass},
+		"setup_token": {"wrong-token"},
+	})
+	rec := httptest.NewRecorder()
+
+	newMux(nil, auth.NewService(newServerAuthStore()), nil, false, nil, nil, "setup-token").ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
 func TestSetupCreatesSession(t *testing.T) {
 	store := newServerAuthStore()
 	req := csrfFormRequest(http.MethodPost, "/setup", url.Values{
@@ -437,6 +495,160 @@ func TestAuthenticatedHome(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), testEmail) {
 		t.Fatalf("body = %q, want email", rec.Body.String())
+	}
+}
+
+func TestAuthenticatedFeedPages(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, userID := newAuthenticatedFeedMux(t, store)
+	store.addFeedForUser(userID, core.Feed{ID: "feed-1", URL: "https://example.com/feed.xml", Title: "Example", SiteURL: "https://example.com"})
+	store.items["item-1"] = core.Item{ID: "item-1", FeedID: "feed-1", URL: "https://example.com/one", Title: "First item"}
+
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "/feeds", want: "Example"},
+		{path: "/feeds/feed-1", want: "First item"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		req.AddCookie(session)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d", test.path, rec.Code, http.StatusOK)
+		}
+		if !strings.Contains(rec.Body.String(), test.want) {
+			t.Fatalf("%s body = %q, want %q", test.path, rec.Body.String(), test.want)
+		}
+	}
+}
+
+func TestAddFeed(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, userID := newAuthenticatedFeedMux(t, store)
+	req := csrfFormRequest(http.MethodPost, "/feeds", url.Values{"url": {"https://example.com/feed.xml"}})
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if got := rec.Header().Get("Location"); got != "/feeds?notice=added" {
+		t.Fatalf("location = %q, want /feeds?notice=added", got)
+	}
+	if len(store.subscriptions[userID]) != 1 {
+		t.Fatalf("subscriptions = %#v, want added feed", store.subscriptions[userID])
+	}
+	if len(store.queuedFeedIDs) != 1 {
+		t.Fatalf("queued feeds = %#v, want added feed", store.queuedFeedIDs)
+	}
+}
+
+func TestAuthenticatedFeedMutations(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, userID := newAuthenticatedFeedMux(t, store)
+	store.addFeedForUser(userID, core.Feed{ID: "feed-1", URL: "https://example.com/feed.xml", Title: "Example"})
+	store.items["item-1"] = core.Item{ID: "item-1", FeedID: "feed-1", URL: "https://example.com/one", Title: "First item"}
+
+	for _, test := range []struct {
+		path     string
+		form     url.Values
+		location string
+		check    func()
+	}{
+		{
+			path:     "/feeds/feed-1/refresh",
+			location: "/feeds/feed-1?notice=queued",
+			check: func() {
+				if len(store.queuedFeedIDs) != 1 || store.queuedFeedIDs[0] != "feed-1" {
+					t.Fatalf("queued feeds = %#v, want feed-1", store.queuedFeedIDs)
+				}
+			},
+		},
+		{
+			path:     "/feeds/feed-1/read",
+			form:     url.Values{"return_to": {"/feeds/feed-1"}},
+			location: "/feeds/feed-1",
+			check: func() {
+				if store.readFeedID != "feed-1" {
+					t.Fatalf("read feed ID = %q, want feed-1", store.readFeedID)
+				}
+			},
+		},
+		{
+			path:     "/items/read",
+			form:     url.Values{"return_to": {"/"}},
+			location: "/",
+			check: func() {
+				if store.allReadUserID != userID {
+					t.Fatalf("all read user ID = %q, want %q", store.allReadUserID, userID)
+				}
+			},
+		},
+		{
+			path:     "/items/item-1/read",
+			form:     url.Values{"return_to": {"/"}},
+			location: "/",
+			check: func() {
+				if store.readItemID != "item-1" {
+					t.Fatalf("read item ID = %q, want item-1", store.readItemID)
+				}
+			},
+		},
+		{
+			path:     "/items/item-1/unread",
+			form:     url.Values{"return_to": {"/"}},
+			location: "/",
+			check: func() {
+				if store.unreadItemID != "item-1" {
+					t.Fatalf("unread item ID = %q, want item-1", store.unreadItemID)
+				}
+			},
+		},
+		{
+			path:     "/feeds/feed-1/delete",
+			location: "/feeds",
+			check: func() {
+				if store.deletedSubscriptionID != "feed-1" {
+					t.Fatalf("deleted subscription ID = %q, want feed-1", store.deletedSubscriptionID)
+				}
+			},
+		},
+	} {
+		req := csrfFormRequest(http.MethodPost, test.path, test.form)
+		req.AddCookie(session)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("%s status = %d, want %d", test.path, rec.Code, http.StatusSeeOther)
+		}
+		if got := rec.Header().Get("Location"); got != test.location {
+			t.Fatalf("%s location = %q, want %q", test.path, got, test.location)
+		}
+		test.check()
+	}
+}
+
+func TestRefreshFeedRequiresSubscription(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, _ := newAuthenticatedFeedMux(t, store)
+	store.feeds["feed-1"] = core.Feed{ID: "feed-1", URL: "https://example.com/feed.xml", Title: "Example"}
+	req := csrfFormRequest(http.MethodPost, "/feeds/feed-1/refresh", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if len(store.queuedFeedIDs) != 0 {
+		t.Fatalf("queued feeds = %#v, want none", store.queuedFeedIDs)
 	}
 }
 
@@ -502,6 +714,237 @@ func csrfFormRequest(method, path string, form url.Values) *http.Request {
 	req := formRequest(method, path, form)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token})
 	return req
+}
+
+func newAuthenticatedFeedMux(t *testing.T, store *serverFeedStore) (http.Handler, *http.Cookie, string) {
+	t.Helper()
+
+	authSvc := auth.NewService(newServerAuthStore())
+	result, err := authSvc.Setup(context.Background(), testEmail, testPass)
+	if err != nil {
+		t.Fatalf("Setup returned error: %v", err)
+	}
+	handler := NewMux(nil, authSvc, feed.NewService(store, nil))
+	return handler, &http.Cookie{Name: auth.CookieName, Value: result.Token}, result.User.ID
+}
+
+type serverFeedStore struct {
+	feeds                 map[string]core.Feed
+	items                 map[string]core.Item
+	subscriptions         map[string]map[string]bool
+	events                []core.Event
+	queuedFeedIDs         []string
+	deletedSubscriptionID string
+	readFeedID            string
+	allReadUserID         string
+	readItemID            string
+	unreadItemID          string
+}
+
+func newServerFeedStore() *serverFeedStore {
+	return &serverFeedStore{
+		feeds:         make(map[string]core.Feed),
+		items:         make(map[string]core.Item),
+		subscriptions: make(map[string]map[string]bool),
+	}
+}
+
+func (s *serverFeedStore) addFeedForUser(userID string, feed core.Feed) {
+	s.feeds[feed.ID] = feed
+	s.subscribe(userID, feed.ID)
+}
+
+func (s *serverFeedStore) subscribe(userID, feedID string) {
+	if s.subscriptions[userID] == nil {
+		s.subscriptions[userID] = make(map[string]bool)
+	}
+	s.subscriptions[userID][feedID] = true
+}
+
+func (s *serverFeedStore) CreateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {
+	if feed.ID == "" {
+		feed.ID = s.nextFeedID()
+	}
+	s.feeds[feed.ID] = feed
+	return feed, nil
+}
+
+func (s *serverFeedStore) FindOrCreateFeed(ctx context.Context, feed core.Feed) (core.Feed, bool, error) {
+	for _, existing := range s.feeds {
+		if existing.URL == feed.URL {
+			return existing, false, nil
+		}
+	}
+	created, err := s.CreateFeed(ctx, feed)
+	return created, true, err
+}
+
+func (s *serverFeedStore) CreateSubscription(ctx context.Context, userID, feedID string) error {
+	if _, ok := s.feeds[feedID]; !ok {
+		return core.ErrFeedNotFound
+	}
+	s.subscribe(userID, feedID)
+	return nil
+}
+
+func (s *serverFeedStore) DeleteFeed(ctx context.Context, id string) error {
+	if _, ok := s.feeds[id]; !ok {
+		return core.ErrFeedNotFound
+	}
+	delete(s.feeds, id)
+	return nil
+}
+
+func (s *serverFeedStore) DeleteSubscription(ctx context.Context, userID, feedID string) error {
+	if !s.subscriptions[userID][feedID] {
+		return core.ErrFeedNotFound
+	}
+	delete(s.subscriptions[userID], feedID)
+	s.deletedSubscriptionID = feedID
+	return nil
+}
+
+func (s *serverFeedStore) FindFeed(ctx context.Context, id string) (core.Feed, error) {
+	feed, ok := s.feeds[id]
+	if !ok {
+		return core.Feed{}, core.ErrFeedNotFound
+	}
+	return feed, nil
+}
+
+func (s *serverFeedStore) FindFeedForUser(ctx context.Context, userID, feedID string) (core.Feed, error) {
+	if !s.subscriptions[userID][feedID] {
+		return core.Feed{}, core.ErrFeedNotFound
+	}
+	return s.FindFeed(ctx, feedID)
+}
+
+func (s *serverFeedStore) ListFeeds(ctx context.Context) ([]core.Feed, error) {
+	feeds := make([]core.Feed, 0, len(s.feeds))
+	for _, feed := range s.feeds {
+		feeds = append(feeds, feed)
+	}
+	return feeds, nil
+}
+
+func (s *serverFeedStore) ListFeedsForUser(ctx context.Context, userID string) ([]core.Feed, error) {
+	feeds := make([]core.Feed, 0, len(s.subscriptions[userID]))
+	for feedID := range s.subscriptions[userID] {
+		feed, ok := s.feeds[feedID]
+		if ok {
+			feeds = append(feeds, feed)
+		}
+	}
+	return feeds, nil
+}
+
+func (s *serverFeedStore) ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
+	return s.itemsForFeed(feedID), nil
+}
+
+func (s *serverFeedStore) ListItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error) {
+	if !s.subscriptions[userID][feedID] {
+		return nil, core.ErrFeedNotFound
+	}
+	return s.itemsForFeed(feedID), nil
+}
+
+func (s *serverFeedStore) ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error) {
+	items := make([]core.Item, 0, len(s.items))
+	for _, item := range s.items {
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (s *serverFeedStore) ListLatestItemsForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error) {
+	items := make([]core.Item, 0, len(s.items))
+	for _, item := range s.items {
+		if s.subscriptions[userID][item.FeedID] {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *serverFeedStore) MarkItemRead(ctx context.Context, userID, itemID string) error {
+	item, ok := s.items[itemID]
+	if !ok || !s.subscriptions[userID][item.FeedID] {
+		return core.ErrItemNotFound
+	}
+	s.readItemID = itemID
+	return nil
+}
+
+func (s *serverFeedStore) MarkItemUnread(ctx context.Context, userID, itemID string) error {
+	item, ok := s.items[itemID]
+	if !ok || !s.subscriptions[userID][item.FeedID] {
+		return core.ErrItemNotFound
+	}
+	s.unreadItemID = itemID
+	return nil
+}
+
+func (s *serverFeedStore) MarkFeedRead(ctx context.Context, userID, feedID string) error {
+	if !s.subscriptions[userID][feedID] {
+		return core.ErrFeedNotFound
+	}
+	s.readFeedID = feedID
+	return nil
+}
+
+func (s *serverFeedStore) MarkAllRead(ctx context.Context, userID string) error {
+	s.allReadUserID = userID
+	return nil
+}
+
+func (s *serverFeedStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
+	if _, ok := s.feeds[feedID]; !ok {
+		return core.ErrFeedNotFound
+	}
+	s.queuedFeedIDs = append(s.queuedFeedIDs, feedID)
+	return nil
+}
+
+func (s *serverFeedStore) UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error) {
+	if _, ok := s.feeds[feed.ID]; !ok {
+		return core.Feed{}, core.ErrFeedNotFound
+	}
+	s.feeds[feed.ID] = feed
+	return feed, nil
+}
+
+func (s *serverFeedStore) UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error) {
+	if item.ID == "" {
+		item.ID = "item-" + strconv.Itoa(len(s.items)+1)
+	}
+	_, exists := s.items[item.ID]
+	s.items[item.ID] = item
+	return item, !exists, nil
+}
+
+func (s *serverFeedStore) AppendEvent(ctx context.Context, event core.Event) (core.Event, error) {
+	s.events = append(s.events, event)
+	return event, nil
+}
+
+func (s *serverFeedStore) itemsForFeed(feedID string) []core.Item {
+	items := make([]core.Item, 0)
+	for _, item := range s.items {
+		if item.FeedID == feedID {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func (s *serverFeedStore) nextFeedID() string {
+	for id := len(s.feeds) + 1; ; id++ {
+		feedID := "feed-" + strconv.Itoa(id)
+		if _, ok := s.feeds[feedID]; !ok {
+			return feedID
+		}
+	}
 }
 
 type serverAuthStore struct {

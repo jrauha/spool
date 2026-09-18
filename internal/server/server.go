@@ -390,6 +390,15 @@ func (a *App) refreshFeed(w http.ResponseWriter, r *http.Request) {
 	if !a.parseCSRFForm(w, r) {
 		return
 	}
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	if _, err := a.feeds.FindForUser(r.Context(), user.ID, r.PathValue("id")); err != nil {
+		if errors.Is(err, core.ErrFeedNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "feed refresh failed", http.StatusInternalServerError)
+		return
+	}
 	if err := a.feeds.QueueRefresh(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, core.ErrFeedNotFound) {
 			http.NotFound(w, r)

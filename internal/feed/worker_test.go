@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,19 @@ func TestWorkerRetriesFailedRefresh(t *testing.T) {
 	}
 	if !store.retried {
 		t.Fatal("job was not retried")
+	}
+}
+
+func TestWorkerPrometheusMetrics(t *testing.T) {
+	worker := NewWorker(&workerStore{}, refreshFunc(func(ctx context.Context, id string) error { return nil }), nil)
+	worker.refreshSucceeded.Add(1)
+	worker.refreshFailed.Add(2)
+
+	metrics := worker.PrometheusMetrics()
+	for _, want := range []string{"spool_refresh_succeeded_total 1", "spool_refresh_failed_total 2"} {
+		if !strings.Contains(metrics, want) {
+			t.Fatalf("metrics = %q, want %q", metrics, want)
+		}
 	}
 }
 
