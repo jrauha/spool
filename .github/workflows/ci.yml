@@ -54,13 +54,14 @@ jobs:
           done
 
       - name: Run tests
-        run: go test -v -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -p 1 -v -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Show coverage
         run: go tool cover -func=coverage.out
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5
+        continue-on-error: true
         with:
           files: coverage.out
           fail_ci_if_error: false
