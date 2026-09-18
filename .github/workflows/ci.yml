@@ -9,6 +9,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      id-token: write
+
     services:
       postgres:
         image: postgres:16
@@ -60,3 +64,4 @@ jobs:
         with:
           files: coverage.out
           fail_ci_if_error: false
+          use_oidc: true
