@@ -198,6 +198,23 @@ func TestFeedTemplatesExposeUnreadCounts(t *testing.T) {
 	}
 }
 
+func TestFeedTitleHashSkipsIconTitles(t *testing.T) {
+	content, err := templateFiles.ReadFile("templates/feed.html")
+	if err != nil {
+		t.Fatalf("ReadFile(%q) returned error: %v", "templates/feed.html", err)
+	}
+	if !strings.Contains(string(content), `{{if .Feed.IconURL}} class="feed-title--with-icon"{{end}}`) {
+		t.Fatalf("feed template does not mark icon titles")
+	}
+	css := string(appCSS)
+	if !strings.Contains(css, `.page-heading h1.feed-title--with-icon::before { content: ""; margin-right: 0; }`) {
+		t.Fatalf("stylesheet does not suppress title hash for icon titles")
+	}
+	if !strings.Contains(css, `.feed-icon { width: 1em; height: 1em; margin-right: var(--title-prefix-gap);`) {
+		t.Fatalf("stylesheet does not match feed icon and title hash spacing")
+	}
+}
+
 func TestReadingTemplatesExposeMarkAllRead(t *testing.T) {
 	for _, test := range []struct {
 		path string
