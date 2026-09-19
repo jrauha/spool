@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for spool-erfkyw on 2026-09-18T20:02:42Z
+# fly.toml app configuration file generated for spool-pqxstg on 2026-09-19T06:22:28Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'spool-erfkyw'
-primary_region = 'arn'
+app = 'spool-pqxstg'
+primary_region = 'ams'
 
 [build]
 
