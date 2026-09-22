@@ -20,11 +20,25 @@ import (
 	"github.com/spool-reader/spool/internal/server"
 )
 
+const (
+	migrateCommand = "migrate"
+	usageMessage   = "usage: spool [migrate]"
+)
+
 func main() {
 	_ = godotenv.Load()
 
 	cfg := config.FromEnv()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	migrateOnly := false
+	switch {
+	case len(os.Args) == 1:
+	case len(os.Args) == 2 && os.Args[1] == migrateCommand:
+		migrateOnly = true
+	default:
+		log.Error(usageMessage)
+		os.Exit(2)
+	}
 
 	database, err := db.Open(cfg.DatabaseURL)
 	if err != nil {
@@ -33,11 +47,15 @@ func main() {
 	}
 	defer database.Close()
 
-	migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := db.Migrate(migrateCtx, database); err != nil {
-		log.Error("database migration failed", "error", err)
-		os.Exit(1)
+	if migrateOnly {
+		migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := db.Migrate(migrateCtx, database); err != nil {
+			log.Error("database migration failed", "error", err)
+			os.Exit(1)
+		}
+		log.Info("database migrations completed")
+		return
 	}
 
 	store := auth.NewPostgresStore(database)
