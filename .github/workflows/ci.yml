@@ -95,8 +95,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          flavor: latest=false
           tags: |
+            type=raw,value=latest
             type=raw,value=${{ github.sha }}
 
       - name: Build Docker image
