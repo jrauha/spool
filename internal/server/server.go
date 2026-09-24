@@ -58,6 +58,7 @@ const (
 )
 
 type App struct {
+	log          *slog.Logger
 	auth         *auth.Service
 	feeds        *feed.Service
 	cookieSecure bool
@@ -80,6 +81,8 @@ type pageData struct {
 	NextPage     int
 	HasNextPage  bool
 	ReturnTo     string
+	ResetEnabled bool
+	ResetToken   string
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
@@ -102,7 +105,7 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 		log = slog.Default()
 	}
 
-	app := &App{auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics, setupToken: setupToken}
+	app := &App{log: log, auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics, setupToken: setupToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", app.readyz)
@@ -113,6 +116,10 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 	mux.HandleFunc("POST /setup", app.setup)
 	mux.HandleFunc("GET /login", app.loginForm)
 	mux.HandleFunc("POST /login", app.login)
+	mux.HandleFunc("GET /forgot-password", app.forgotPasswordForm)
+	mux.HandleFunc("POST /forgot-password", app.requestPasswordReset)
+	mux.HandleFunc("GET /reset", app.resetPasswordForm)
+	mux.HandleFunc("POST /reset", app.resetPassword)
 	mux.HandleFunc("POST /logout", app.logout)
 	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
 	mux.Handle("GET /feeds", app.requireAuth(http.HandlerFunc(app.feedList)))
@@ -529,7 +536,11 @@ func (a *App) loginForm(w http.ResponseWriter, r *http.Request) {
 	if a.redirectToSetup(w, r) {
 		return
 	}
-	a.renderPage(w, r, "login.html", pageData{})
+	notice := ""
+	if r.URL.Query().Get("notice") == "password-reset" {
+		notice = "Password reset. You can now log in."
+	}
+	a.renderPage(w, r, "login.html", pageData{Notice: notice, ResetEnabled: a.passwordResetEnabled()})
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
@@ -550,6 +561,68 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	setSessionCookie(w, result.Token, a.cookieSecure)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) forgotPasswordForm(w http.ResponseWriter, r *http.Request) {
+	if !a.passwordResetEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	a.renderPage(w, r, "forgot-password.html", pageData{})
+}
+
+func (a *App) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	if !a.passwordResetEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if err := a.auth.RequestPasswordReset(r.Context(), r.FormValue("email")); err != nil {
+		a.log.Error("password reset request failed", "error", err)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	a.renderPage(w, r, "forgot-password.html", pageData{Notice: "If that account exists, a reset link has been sent."})
+}
+
+func (a *App) resetPasswordForm(w http.ResponseWriter, r *http.Request) {
+	if !a.passwordResetEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		http.Error(w, "invalid reset link", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	a.renderPage(w, r, "reset.html", pageData{ResetToken: token})
+}
+
+func (a *App) resetPassword(w http.ResponseWriter, r *http.Request) {
+	if !a.passwordResetEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.parseCSRFForm(w, r) {
+		return
+	}
+	if err := a.auth.ResetPassword(r.Context(), r.FormValue("token"), r.FormValue("password")); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrInvalidResetToken):
+			http.Error(w, "invalid or expired reset link", http.StatusBadRequest)
+		case errors.Is(err, auth.ErrPasswordTooShort):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		default:
+			a.log.Error("password reset failed", "error", err)
+			http.Error(w, "password reset failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	clearSessionCookie(w, a.cookieSecure)
+	http.Redirect(w, r, "/login?notice=password-reset", http.StatusSeeOther)
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
@@ -597,6 +670,10 @@ func (a *App) setupRequired(r *http.Request) (bool, error) {
 		return false, nil
 	}
 	return a.auth.SetupRequired(r.Context())
+}
+
+func (a *App) passwordResetEnabled() bool {
+	return a.auth != nil && a.auth.PasswordResetEnabled()
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, secure bool) {

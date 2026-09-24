@@ -17,6 +17,7 @@ import (
 	"github.com/spool-reader/spool/internal/core"
 	"github.com/spool-reader/spool/internal/db"
 	"github.com/spool-reader/spool/internal/feed"
+	"github.com/spool-reader/spool/internal/mailer"
 	"github.com/spool-reader/spool/internal/server"
 )
 
@@ -61,6 +62,16 @@ func main() {
 	store := auth.NewPostgresStore(database)
 	coreStore := core.NewPostgresStore(database)
 	authSvc := auth.NewService(store)
+	if cfg.SMTPAddr != "" {
+		resetSender, err := mailer.NewSMTPPasswordResetSender(
+			cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.PublicURL,
+		)
+		if err != nil {
+			log.Error("password reset email configuration failed", "error", err)
+			os.Exit(1)
+		}
+		authSvc = auth.NewServiceWithPasswordReset(store, resetSender)
+	}
 	setupRequired, err := authSvc.SetupRequired(context.Background())
 	if err != nil {
 		log.Error("setup check failed", "error", err)

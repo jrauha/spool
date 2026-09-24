@@ -34,3 +34,8 @@ SPOOL_DATABASE_URL=postgres://spool:spool@127.0.0.1:5432/spool?sslmode=disable
 ```
 
 Set `SPOOL_TEST_DATABASE_URL` to run Postgres integration tests.
+
+Password reset email is enabled when `SPOOL_SMTP_ADDR` is set. Configure
+`SPOOL_PUBLIC_URL` (an HTTPS URL), `SPOOL_SMTP_FROM`, and optionally
+`SPOOL_SMTP_USERNAME` and `SPOOL_SMTP_PASSWORD`. The SMTP server must support
+STARTTLS.

@@ -26,6 +26,11 @@ func TestFromEnvUsesOverrides(t *testing.T) {
 	t.Setenv("SPOOL_HOME", "/var/lib/spool")
 	t.Setenv("SPOOL_DATABASE_URL", "postgres://spool:spool@localhost/spool?sslmode=disable")
 	t.Setenv("SPOOL_COOKIE_SECURE", "false")
+	t.Setenv("SPOOL_PUBLIC_URL", "https://spool.example")
+	t.Setenv("SPOOL_SMTP_ADDR", "smtp.example:587")
+	t.Setenv("SPOOL_SMTP_USERNAME", "spool")
+	t.Setenv("SPOOL_SMTP_PASSWORD", "secret")
+	t.Setenv("SPOOL_SMTP_FROM", "Spool <spool@example.com>")
 
 	cfg := FromEnv()
 	if cfg.Addr != ":9090" {
@@ -39,5 +44,11 @@ func TestFromEnvUsesOverrides(t *testing.T) {
 	}
 	if cfg.CookieSecure {
 		t.Fatal("CookieSecure = true, want false")
+	}
+	if cfg.PublicURL != "https://spool.example" || cfg.SMTPAddr != "smtp.example:587" {
+		t.Fatalf("password reset config = (%q, %q)", cfg.PublicURL, cfg.SMTPAddr)
+	}
+	if cfg.SMTPUsername != "spool" || cfg.SMTPPassword != "secret" || cfg.SMTPFrom != "Spool <spool@example.com>" {
+		t.Fatal("SMTP credentials were not loaded")
 	}
 }

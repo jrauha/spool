@@ -91,6 +91,75 @@ func (s *PostgresStore) CreateSession(ctx context.Context, userID, tokenHash str
 	return session, err
 }
 
+func (s *PostgresStore) CreatePasswordReset(ctx context.Context, userID, tokenHash string, rejectAfter, expiresAt time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID); err != nil {
+		return err
+	}
+	var recent bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM password_resets
+			WHERE user_id = $1 AND created_at > $2 AND used_at IS NULL
+		)
+	`, userID, rejectAfter).Scan(&recent); err != nil {
+		return err
+	}
+	if recent {
+		return errPasswordResetThrottled
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM password_resets
+		WHERE expires_at <= now() OR used_at IS NOT NULL OR (user_id = $1 AND used_at IS NULL)
+	`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO password_resets (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, tokenHash, expiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) ResetPassword(ctx context.Context, tokenHash, passwordHash string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var resetID, userID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text
+		FROM password_resets
+		WHERE token_hash = $1 AND expires_at > $2 AND used_at IS NULL
+		FOR UPDATE
+	`, tokenHash, now).Scan(&resetID, &userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalidResetToken
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = $2, updated_at = $3 WHERE id = $1`, userID, passwordHash, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE password_resets SET used_at = $2 WHERE id = $1`, resetID, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash)
 	return err

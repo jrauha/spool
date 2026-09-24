@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reset password · Spool</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell auth">
+  <header class="topbar"><span class="brand">Spool</span></header>
+  <main>
+    <h1>Reset password</h1>
+    <form method="post" action="/reset">
+      <input name="csrf_token" type="hidden" value="{{.CSRFToken}}">
+      <input name="token" type="hidden" value="{{.ResetToken}}">
+      <label>New password <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button>Reset password</button>
+    </form>
+  </main>
+</div>
+</body>
+</html>

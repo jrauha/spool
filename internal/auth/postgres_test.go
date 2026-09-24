@@ -84,6 +84,35 @@ func TestPostgresStoreUserSessionFlow(t *testing.T) {
 	}
 }
 
+func TestPostgresStorePasswordReset(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	user, err := store.CreateFirstUser(ctx, testEmail, "old-hash", "admin")
+	if err != nil {
+		t.Fatalf("CreateFirstUser returned error: %v", err)
+	}
+	if _, err := store.CreateSession(ctx, user.ID, "session-hash", time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := store.CreatePasswordReset(ctx, user.ID, "reset-hash", time.Now().UTC().Add(-time.Minute), time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("CreatePasswordReset returned error: %v", err)
+	}
+	if err := store.ResetPassword(ctx, "reset-hash", "new-hash", time.Now().UTC()); err != nil {
+		t.Fatalf("ResetPassword returned error: %v", err)
+	}
+	found, err := store.FindUserByEmail(ctx, testEmail)
+	if err != nil || found.PasswordHash != "new-hash" {
+		t.Fatalf("user = %#v, error = %v", found, err)
+	}
+	if _, _, err := store.FindUserBySessionTokenHash(ctx, "session-hash", time.Now().UTC()); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("session lookup error = %v, want %v", err, ErrSessionNotFound)
+	}
+	if err := store.ResetPassword(ctx, "reset-hash", "other-hash", time.Now().UTC()); !errors.Is(err, ErrInvalidResetToken) {
+		t.Fatalf("reused ResetPassword error = %v, want %v", err, ErrInvalidResetToken)
+	}
+}
+
 func TestPostgresStoreCreateFirstUserRejectsSetupComplete(t *testing.T) {
 	database := openTestDB(t)
 	store := NewPostgresStore(database)

@@ -494,6 +494,48 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestPasswordResetFlow(t *testing.T) {
+	store := newServerAuthStore()
+	sender := &serverResetSender{}
+	svc := auth.NewServiceWithPasswordReset(store, sender)
+	setup, err := svc.Setup(context.Background(), testEmail, testPass)
+	if err != nil {
+		t.Fatalf("Setup returned error: %v", err)
+	}
+
+	request := csrfFormRequest(http.MethodPost, "/forgot-password", url.Values{"email": {testEmail}})
+	requestRec := httptest.NewRecorder()
+	NewMux(nil, svc, nil).ServeHTTP(requestRec, request)
+	if requestRec.Code != http.StatusOK || sender.token == "" {
+		t.Fatalf("request status = %d, token = %q", requestRec.Code, sender.token)
+	}
+
+	reset := csrfFormRequest(http.MethodPost, "/reset", url.Values{
+		"token":    {sender.token},
+		"password": {"new-password"},
+	})
+	resetRec := httptest.NewRecorder()
+	NewMux(nil, svc, nil).ServeHTTP(resetRec, reset)
+	if resetRec.Code != http.StatusSeeOther {
+		t.Fatalf("reset status = %d, want %d", resetRec.Code, http.StatusSeeOther)
+	}
+	if _, _, err := svc.AuthenticateToken(context.Background(), setup.Token); !errors.Is(err, auth.ErrSessionNotFound) {
+		t.Fatalf("AuthenticateToken error = %v, want %v", err, auth.ErrSessionNotFound)
+	}
+}
+
+func TestPasswordResetRequestDoesNotDiscloseAccount(t *testing.T) {
+	svc := auth.NewServiceWithPasswordReset(newServerAuthStore(), &serverResetSender{})
+	req := csrfFormRequest(http.MethodPost, "/forgot-password", url.Values{"email": {"missing@example.com"}})
+	rec := httptest.NewRecorder()
+
+	NewMux(nil, svc, nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "If that account exists") {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAuthenticatedHome(t *testing.T) {
 	store := newServerAuthStore()
 	svc := auth.NewService(store)
@@ -964,12 +1006,25 @@ func (s *serverFeedStore) nextFeedID() string {
 	}
 }
 
+type serverResetSender struct {
+	token string
+}
+
+func (s *serverResetSender) SendPasswordReset(ctx context.Context, email, token string) error {
+	s.token = token
+	return nil
+}
+
 type serverAuthStore struct {
-	mu           sync.Mutex
-	setupErr     error
-	usersByEmail map[string]auth.User
-	sessions     map[string]auth.Session
-	nextID       int
+	mu             sync.Mutex
+	setupErr       error
+	usersByEmail   map[string]auth.User
+	sessions       map[string]auth.Session
+	resetUserID    string
+	resetTokenHash string
+	resetExpiresAt time.Time
+	resetUsedAt    *time.Time
+	nextID         int
 }
 
 func newServerAuthStore() *serverAuthStore {
@@ -1028,6 +1083,34 @@ func (s *serverAuthStore) CreateSession(ctx context.Context, userID, tokenHash s
 	session := auth.Session{ID: s.id(), UserID: userID, TokenHash: tokenHash, ExpiresAt: expiresAt, CreatedAt: time.Now().UTC()}
 	s.sessions[session.ID] = session
 	return session, nil
+}
+
+func (s *serverAuthStore) CreatePasswordReset(ctx context.Context, userID, tokenHash string, rejectAfter, expiresAt time.Time) error {
+	s.resetUserID = userID
+	s.resetTokenHash = tokenHash
+	s.resetExpiresAt = expiresAt
+	s.resetUsedAt = nil
+	return nil
+}
+
+func (s *serverAuthStore) ResetPassword(ctx context.Context, tokenHash, passwordHash string, now time.Time) error {
+	if s.resetTokenHash != tokenHash || !s.resetExpiresAt.After(now) || s.resetUsedAt != nil {
+		return auth.ErrInvalidResetToken
+	}
+	usedAt := now
+	s.resetUsedAt = &usedAt
+	for email, user := range s.usersByEmail {
+		if user.ID == s.resetUserID {
+			user.PasswordHash = passwordHash
+			s.usersByEmail[email] = user
+		}
+	}
+	for id, session := range s.sessions {
+		if session.UserID == s.resetUserID {
+			delete(s.sessions, id)
+		}
+	}
+	return nil
 }
 
 func (s *serverAuthStore) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error {

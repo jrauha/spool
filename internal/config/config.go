@@ -17,6 +17,11 @@ type Config struct {
 	DatabaseURL  string
 	CookieSecure bool
 	SetupToken   string
+	PublicURL    string
+	SMTPAddr     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 func FromEnv() Config {
@@ -26,6 +31,11 @@ func FromEnv() Config {
 		DatabaseURL:  os.Getenv("SPOOL_DATABASE_URL"),
 		CookieSecure: envBool("SPOOL_COOKIE_SECURE", DefaultCookieSecure),
 		SetupToken:   os.Getenv("SPOOL_SETUP_TOKEN"),
+		PublicURL:    os.Getenv("SPOOL_PUBLIC_URL"),
+		SMTPAddr:     os.Getenv("SPOOL_SMTP_ADDR"),
+		SMTPUsername: os.Getenv("SPOOL_SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("SPOOL_SMTP_PASSWORD"),
+		SMTPFrom:     os.Getenv("SPOOL_SMTP_FROM"),
 	}
 }
 
