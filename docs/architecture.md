@@ -55,9 +55,7 @@ Feed refresh arguments include the feed URL and refresh generation. Workers
 ignore stale jobs, and the scheduler excludes feeds with a recorded refresh
 error; manual refreshes can still enqueue a new job. Transient errors use
 River retries, while known permanent HTTP errors cancel the job. River schema
-migrations run through `spool migrate`. The migration drops the
-legacy `feed_refresh_jobs` table rather than importing its pending rows; due
-feeds are rediscovered by the scheduler after deployment.
+migrations run through `spool migrate`.
 
 ## Runtime layout
 
