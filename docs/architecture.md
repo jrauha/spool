@@ -40,6 +40,25 @@ Core tables:
 
 Plugins do not run database migrations in v1. They may store private files under `plugin-data/<plugin-name>/` and may extend core entities through validated field and asset operations.
 
+## Background jobs
+
+River owns job persistence, claims, retries, uniqueness, and periodic-job
+leadership. Feature packages define typed job arguments and workers; the
+composition root registers them with River. The server inserts request-driven
+jobs, worker processes execute refresh jobs, and scheduler processes consume a
+dedicated queue that discovers due feeds in bounded batches. River's elected
+periodic leader enqueues the shared scan trigger, so worker replicas do not
+independently scan feeds. All started River clients register the same periodic
+job definitions.
+
+Feed refresh arguments include the feed URL and refresh generation. Workers
+ignore stale jobs, and the scheduler excludes feeds with a recorded refresh
+error; manual refreshes can still enqueue a new job. Transient errors use
+River retries, while known permanent HTTP errors cancel the job. River schema
+migrations run through `spool migrate`. The migration drops the
+legacy `feed_refresh_jobs` table rather than importing its pending rows; due
+feeds are rediscovered by the scheduler after deployment.
+
 ## Runtime layout
 
 ```text

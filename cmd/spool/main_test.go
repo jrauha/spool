@@ -12,6 +12,7 @@ func TestParseCommand(t *testing.T) {
 		{name: "default server", want: serverCommand},
 		{name: "explicit server", args: []string{serverCommand}, want: serverCommand},
 		{name: "worker", args: []string{workerCommand}, want: workerCommand},
+		{name: "scheduler", args: []string{schedulerCommand}, want: schedulerCommand},
 		{name: "migrate", args: []string{migrateCommand}, want: migrateCommand},
 		{name: "unknown", args: []string{"unknown"}, bad: true},
 		{name: "extra arguments", args: []string{workerCommand, "feed"}, bad: true},

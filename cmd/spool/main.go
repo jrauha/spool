@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/riverqueue/river"
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
 	"github.com/spool-reader/spool/internal/core"
@@ -23,10 +24,11 @@ import (
 )
 
 const (
-	serverCommand  = "server"
-	workerCommand  = "worker"
-	migrateCommand = "migrate"
-	usageMessage   = "usage: spool [server|worker|migrate]"
+	serverCommand    = "server"
+	workerCommand    = "worker"
+	schedulerCommand = "scheduler"
+	migrateCommand   = "migrate"
+	usageMessage     = "usage: spool [server|worker|scheduler|migrate]"
 )
 
 func main() {
@@ -67,6 +69,8 @@ func main() {
 		runErr = runServer(ctx, cfg, log, database)
 	case workerCommand:
 		runErr = runWorker(ctx, log, database)
+	case schedulerCommand:
+		runErr = runScheduler(ctx, log, database)
 	}
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		log.Error("spool stopped", "role", command, "error", runErr)
@@ -78,7 +82,7 @@ func parseCommand(args []string) (string, error) {
 	if len(args) == 0 {
 		return serverCommand, nil
 	}
-	if len(args) == 1 && (args[0] == serverCommand || args[0] == workerCommand || args[0] == migrateCommand) {
+	if len(args) == 1 && (args[0] == serverCommand || args[0] == workerCommand || args[0] == schedulerCommand || args[0] == migrateCommand) {
 		return args[0], nil
 	}
 	return "", errors.New(usageMessage)
@@ -105,7 +109,11 @@ func runServer(ctx context.Context, cfg config.Config, log *slog.Logger, databas
 		return errors.New("SPOOL_SETUP_TOKEN is required before initial setup")
 	}
 
-	feedSvc := feed.NewService(coreStore, nil)
+	riverClient, err := newRiverInsertClient(database, log)
+	if err != nil {
+		return err
+	}
+	feedSvc := feed.NewServiceWithJobs(coreStore, &riverFeedJobs{client: riverClient}, nil)
 	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, nil)
 	serverErr := make(chan error, 1)
 	go func() {
@@ -127,9 +135,36 @@ func runServer(ctx context.Context, cfg config.Config, log *slog.Logger, databas
 }
 
 func runWorker(ctx context.Context, log *slog.Logger, database *sql.DB) error {
-	coreStore := core.NewPostgresStore(database)
-	feedSvc := feed.NewService(coreStore, nil)
-	worker := feed.NewWorker(coreStore, feedSvc, log)
-	log.Info("starting spool worker", "kind", "feed.refresh")
-	return worker.Run(ctx)
+	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
+		river.QueueDefault: {MaxWorkers: defaultFeedWorkers},
+	})
+	if err != nil {
+		return err
+	}
+	log.Info("starting spool River worker", "queue", river.QueueDefault)
+	return runRiverClient(ctx, client)
+}
+
+func runScheduler(ctx context.Context, log *slog.Logger, database *sql.DB) error {
+	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
+		feed.RefreshScheduleQueue: {MaxWorkers: 1},
+	})
+	if err != nil {
+		return err
+	}
+	log.Info("starting spool River scheduler", "queue", feed.RefreshScheduleQueue)
+	return runRiverClient(ctx, client)
+}
+
+func runRiverClient(ctx context.Context, client *river.Client[*sql.Tx]) error {
+	if err := client.Start(ctx); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Stop(shutdownCtx); err != nil {
+		return err
+	}
+	return ctx.Err()
 }

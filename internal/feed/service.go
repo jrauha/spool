@@ -52,7 +52,6 @@ type Store interface {
 	MarkItemUnread(ctx context.Context, userID, itemID string) error
 	MarkFeedRead(ctx context.Context, userID, feedID string) error
 	MarkAllRead(ctx context.Context, userID string) error
-	EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
 	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
 	AppendEvent(ctx context.Context, event core.Event) (core.Event, error)
@@ -60,14 +59,19 @@ type Store interface {
 
 type Service struct {
 	store  Store
+	jobs   RefreshJobInserter
 	client *http.Client
 }
 
 func NewService(store Store, client *http.Client) *Service {
+	return NewServiceWithJobs(store, nil, client)
+}
+
+func NewServiceWithJobs(store Store, jobs RefreshJobInserter, client *http.Client) *Service {
 	if client == nil {
 		client = safeHTTPClient()
 	}
-	return &Service{store: store, client: client}
+	return &Service{store: store, jobs: jobs, client: client}
 }
 
 func (s *Service) ListFeeds(ctx context.Context) ([]core.Feed, error) {
@@ -138,10 +142,11 @@ func (s *Service) Delete(ctx context.Context, userID, id string) error {
 }
 
 func (s *Service) QueueRefresh(ctx context.Context, id string) error {
-	if _, err := s.store.FindFeed(ctx, id); err != nil {
+	feed, err := s.store.FindFeed(ctx, id)
+	if err != nil {
 		return err
 	}
-	return s.store.EnqueueRefresh(ctx, id, time.Now().UTC())
+	return s.enqueueRefresh(ctx, feed)
 }
 
 func (s *Service) Add(ctx context.Context, userID, rawURL string) (core.Feed, error) {
@@ -160,7 +165,7 @@ func (s *Service) Add(ctx context.Context, userID, rawURL string) (core.Feed, er
 	if err := s.appendEvent(ctx, core.EventFeedAdded, "feed", feed.ID); err != nil {
 		return core.Feed{}, err
 	}
-	if err := s.store.EnqueueRefresh(ctx, feed.ID, time.Now().UTC()); err != nil {
+	if err := s.enqueueRefresh(ctx, feed); err != nil {
 		return core.Feed{}, err
 	}
 	return feed, nil
@@ -171,7 +176,21 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	return s.refresh(ctx, feed)
+}
 
+func (s *Service) RefreshJob(ctx context.Context, args RefreshArgs) error {
+	feed, err := s.store.FindFeed(ctx, args.FeedID)
+	if err != nil {
+		return err
+	}
+	if feed.URL != args.FeedURL || refreshArgs(feed.ID, feed.URL, feed.RefreshedAt).Generation != args.Generation {
+		return nil
+	}
+	return s.refresh(ctx, feed)
+}
+
+func (s *Service) refresh(ctx context.Context, feed core.Feed) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feed.URL, nil)
 	if err != nil {
 		return s.recordError(ctx, feed, err)
@@ -238,6 +257,13 @@ func (s *Service) Refresh(ctx context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) enqueueRefresh(ctx context.Context, feed core.Feed) error {
+	if s.jobs == nil {
+		return fmt.Errorf("refresh queue unavailable")
+	}
+	return s.jobs.InsertRefresh(ctx, refreshArgs(feed.ID, feed.URL, feed.RefreshedAt))
 }
 
 func validFeedURL(parsedURL *url.URL) bool {
