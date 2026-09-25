@@ -27,10 +27,7 @@ Override the address with `SPOOL_ADDR`. Run feed processing with `spool worker`
 and periodic discovery with `spool scheduler`. River coordinates periodic jobs
 across active worker and scheduler clients.
 
-Run `spool migrate` to apply Spool and River schema migrations. On upgrade,
-stop the old server and worker before migrating. Pending jobs in the legacy
-refresh queue are intentionally discarded; the scheduler will rediscover feeds
-that are due for refresh.
+Run `spool migrate` to apply Spool and River schema migrations.
 
 Spool uses Postgres. Set `SPOOL_DATABASE_URL` before running, for example:
 
