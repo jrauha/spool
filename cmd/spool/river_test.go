@@ -42,18 +42,22 @@ func TestRiverFeedJobBatchFallsBackOnUniqueConflict(t *testing.T) {
 	if err := jobs.InsertRefreshBatch(ctx, args); err != nil {
 		t.Fatalf("duplicate batch insert: %v", err)
 	}
-	if err := jobs.InsertRefresh(ctx, args[0]); err != nil {
+	singleArgs := feed.RefreshArgs{FeedID: prefix + "-single", FeedURL: "https://example.com/single"}
+	if err := jobs.InsertRefresh(ctx, singleArgs); err != nil {
+		t.Fatalf("single insert: %v", err)
+	}
+	if err := jobs.InsertRefresh(ctx, singleArgs); err != nil {
 		t.Fatalf("duplicate single insert: %v", err)
 	}
 
 	var count int
 	if err := database.QueryRowContext(ctx, `
 		SELECT count(*) FROM river_job
-		WHERE kind = 'feed.refresh' AND args->>'feed_id' IN ($1, $2)
-	`, args[0].FeedID, args[1].FeedID).Scan(&count); err != nil {
+		WHERE kind = 'feed.refresh' AND args->>'feed_id' IN ($1, $2, $3)
+	`, args[0].FeedID, args[1].FeedID, singleArgs.FeedID).Scan(&count); err != nil {
 		t.Fatalf("count refresh jobs: %v", err)
 	}
-	if count != len(args) {
-		t.Fatalf("refresh job count = %d, want %d", count, len(args))
+	if count != len(args)+1 {
+		t.Fatalf("refresh job count = %d, want %d", count, len(args)+1)
 	}
 }

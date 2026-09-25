@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/spool-reader/spool/internal/core"
@@ -71,7 +71,7 @@ func (j *riverFeedJobs) InsertRefreshBatch(ctx context.Context, args []feed.Refr
 	if _, err := j.client.InsertManyFast(ctx, params); err == nil {
 		return nil
 	} else {
-		var postgresErr *pq.Error
+		var postgresErr *pgconn.PgError
 		if !errors.As(err, &postgresErr) || postgresErr.Code != "23505" {
 			return fmt.Errorf("insert feed refresh batch: %w", err)
 		}
