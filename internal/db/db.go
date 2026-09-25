@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivermigrate"
 )
 
 //go:embed migrations/*.sql
@@ -26,7 +28,7 @@ func Open(databaseURL string) (*sql.DB, error) {
 	if strings.TrimSpace(databaseURL) == "" {
 		return nil, fmt.Errorf("SPOOL_DATABASE_URL is required")
 	}
-	db, err := sql.Open("postgres", databaseURL)
+	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +96,14 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+	}
+
+	riverMigrator, err := rivermigrate.New(riverdatabasesql.New(db), nil)
+	if err != nil {
+		return fmt.Errorf("create River migrator: %w", err)
+	}
+	if _, err := riverMigrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("migrate River schema: %w", err)
 	}
 	return nil
 }

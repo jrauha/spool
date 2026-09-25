@@ -783,7 +783,7 @@ func newAuthenticatedFeedMux(t *testing.T, store *serverFeedStore) (http.Handler
 	if err != nil {
 		t.Fatalf("Setup returned error: %v", err)
 	}
-	handler := NewMux(nil, authSvc, feed.NewService(store, nil))
+	handler := NewMux(nil, authSvc, feed.NewServiceWithJobs(store, store, nil))
 	return handler, &http.Cookie{Name: auth.CookieName, Value: result.Token}, result.User.ID
 }
 
@@ -957,11 +957,20 @@ func (s *serverFeedStore) MarkAllRead(ctx context.Context, userID string) error 
 	return nil
 }
 
-func (s *serverFeedStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
-	if _, ok := s.feeds[feedID]; !ok {
+func (s *serverFeedStore) InsertRefresh(ctx context.Context, args feed.RefreshArgs) error {
+	if _, ok := s.feeds[args.FeedID]; !ok {
 		return core.ErrFeedNotFound
 	}
-	s.queuedFeedIDs = append(s.queuedFeedIDs, feedID)
+	s.queuedFeedIDs = append(s.queuedFeedIDs, args.FeedID)
+	return nil
+}
+
+func (s *serverFeedStore) InsertRefreshBatch(ctx context.Context, args []feed.RefreshArgs) error {
+	for _, arg := range args {
+		if err := s.InsertRefresh(ctx, arg); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

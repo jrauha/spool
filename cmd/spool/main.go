@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/riverqueue/river"
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
 	"github.com/spool-reader/spool/internal/core"
@@ -22,8 +24,11 @@ import (
 )
 
 const (
-	migrateCommand = "migrate"
-	usageMessage   = "usage: spool [migrate]"
+	serverCommand    = "server"
+	workerCommand    = "worker"
+	schedulerCommand = "scheduler"
+	migrateCommand   = "migrate"
+	usageMessage     = "usage: spool [server|worker|scheduler|migrate]"
 )
 
 func main() {
@@ -31,13 +36,9 @@ func main() {
 
 	cfg := config.FromEnv()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	migrateOnly := false
-	switch {
-	case len(os.Args) == 1:
-	case len(os.Args) == 2 && os.Args[1] == migrateCommand:
-		migrateOnly = true
-	default:
-		log.Error(usageMessage)
+	command, err := parseCommand(os.Args[1:])
+	if err != nil {
+		log.Error(err.Error())
 		os.Exit(2)
 	}
 
@@ -48,10 +49,10 @@ func main() {
 	}
 	defer database.Close()
 
-	if migrateOnly {
-		migrateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if command == migrateCommand {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := db.Migrate(migrateCtx, database); err != nil {
+		if err := db.Migrate(ctx, database); err != nil {
 			log.Error("database migration failed", "error", err)
 			os.Exit(1)
 		}
@@ -59,6 +60,35 @@ func main() {
 		return
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var runErr error
+	switch command {
+	case serverCommand:
+		runErr = runServer(ctx, cfg, log, database)
+	case workerCommand:
+		runErr = runWorker(ctx, log, database)
+	case schedulerCommand:
+		runErr = runScheduler(ctx, log, database)
+	}
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		log.Error("spool stopped", "role", command, "error", runErr)
+		os.Exit(1)
+	}
+}
+
+func parseCommand(args []string) (string, error) {
+	if len(args) == 0 {
+		return serverCommand, nil
+	}
+	if len(args) == 1 && (args[0] == serverCommand || args[0] == workerCommand || args[0] == schedulerCommand || args[0] == migrateCommand) {
+		return args[0], nil
+	}
+	return "", errors.New(usageMessage)
+}
+
+func runServer(ctx context.Context, cfg config.Config, log *slog.Logger, database *sql.DB) error {
 	store := auth.NewPostgresStore(database)
 	coreStore := core.NewPostgresStore(database)
 	authSvc := auth.NewService(store)
@@ -67,35 +97,27 @@ func main() {
 			cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.PublicURL,
 		)
 		if err != nil {
-			log.Error("password reset email configuration failed", "error", err)
-			os.Exit(1)
+			return err
 		}
 		authSvc = auth.NewServiceWithPasswordReset(store, resetSender)
 	}
-	setupRequired, err := authSvc.SetupRequired(context.Background())
+	setupRequired, err := authSvc.SetupRequired(ctx)
 	if err != nil {
-		log.Error("setup check failed", "error", err)
-		os.Exit(1)
+		return err
 	}
 	if setupRequired && strings.TrimSpace(cfg.SetupToken) == "" {
-		log.Error("SPOOL_SETUP_TOKEN is required before initial setup")
-		os.Exit(1)
+		return errors.New("SPOOL_SETUP_TOKEN is required before initial setup")
 	}
-	feedSvc := feed.NewService(coreStore, nil)
-	worker := feed.NewWorker(coreStore, feedSvc, log)
-	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, worker.PrometheusMetrics)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	riverClient, err := newRiverInsertClient(database, log)
+	if err != nil {
+		return err
+	}
+	feedSvc := feed.NewServiceWithJobs(coreStore, &riverFeedJobs{client: riverClient}, nil)
+	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, nil)
 	serverErr := make(chan error, 1)
-	workerErr := make(chan error, 1)
-	workerDone := make(chan struct{})
 	go func() {
-		defer close(workerDone)
-		workerErr <- worker.Run(ctx)
-	}()
-	go func() {
-		log.Info("starting spool", "addr", cfg.Addr)
+		log.Info("starting spool server", "addr", cfg.Addr)
 		serverErr <- srv.ListenAndServe()
 	}()
 
@@ -103,25 +125,46 @@ func main() {
 	case <-ctx.Done():
 	case err := <-serverErr:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server failed", "error", err)
+			return err
 		}
-		stop()
-	case err := <-workerErr:
-		if !errors.Is(err, context.Canceled) {
-			log.Error("refresh worker failed", "error", err)
-		}
-		stop()
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("shutdown failed", "error", err)
-		os.Exit(1)
+	return srv.Shutdown(shutdownCtx)
+}
+
+func runWorker(ctx context.Context, log *slog.Logger, database *sql.DB) error {
+	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
+		river.QueueDefault: {MaxWorkers: defaultFeedWorkers},
+	})
+	if err != nil {
+		return err
 	}
-	select {
-	case <-workerDone:
-	case <-shutdownCtx.Done():
-		log.Error("refresh worker shutdown timed out")
+	log.Info("starting spool River worker", "queue", river.QueueDefault)
+	return runRiverClient(ctx, client)
+}
+
+func runScheduler(ctx context.Context, log *slog.Logger, database *sql.DB) error {
+	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
+		feed.RefreshScheduleQueue: {MaxWorkers: 1},
+	})
+	if err != nil {
+		return err
 	}
+	log.Info("starting spool River scheduler", "queue", feed.RefreshScheduleQueue)
+	return runRiverClient(ctx, client)
+}
+
+func runRiverClient(ctx context.Context, client *river.Client[*sql.Tx]) error {
+	if err := client.Start(ctx); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Stop(shutdownCtx); err != nil {
+		return err
+	}
+	return ctx.Err()
 }

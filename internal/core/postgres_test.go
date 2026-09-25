@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -214,8 +213,15 @@ func TestPostgresStoreSubscriptionReadState(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreEnqueueDueRefresh(t *testing.T) {
+func TestPostgresStoreListFeedsDueRefresh(t *testing.T) {
 	database := openTestDB(t)
+	var legacyQueueExists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('feed_refresh_jobs') IS NOT NULL`).Scan(&legacyQueueExists); err != nil {
+		t.Fatalf("check legacy queue table: %v", err)
+	}
+	if legacyQueueExists {
+		t.Fatal("legacy refresh queue table still exists")
+	}
 	store := NewPostgresStore(database)
 	ctx := context.Background()
 	feed := testFeed(t, store, ctx)
@@ -224,67 +230,24 @@ func TestPostgresStoreEnqueueDueRefresh(t *testing.T) {
 		t.Fatalf("CreateSubscription returned error: %v", err)
 	}
 
-	queued, err := store.EnqueueDueRefresh(ctx, time.Hour)
+	feeds, err := store.ListFeedsDueRefresh(ctx, time.Hour, 10)
 	if err != nil {
-		t.Fatalf("EnqueueDueRefresh returned error: %v", err)
+		t.Fatalf("ListFeedsDueRefresh returned error: %v", err)
 	}
-	if queued != 1 {
-		t.Fatalf("queued = %d, want 1", queued)
+	if len(feeds) != 1 || feeds[0].ID != feed.ID {
+		t.Fatalf("due feeds = %#v, want feed %q", feeds, feed.ID)
 	}
 
-	job, err := store.ClaimRefresh(ctx, time.Minute)
+	feed.LastError = "permanent failure"
+	if _, err := store.UpdateFeed(ctx, feed); err != nil {
+		t.Fatalf("UpdateFeed returned error: %v", err)
+	}
+	feeds, err = store.ListFeedsDueRefresh(ctx, time.Hour, 10)
 	if err != nil {
-		t.Fatalf("ClaimRefresh returned error: %v", err)
+		t.Fatalf("ListFeedsDueRefresh after error returned error: %v", err)
 	}
-	if job.FeedID != feed.ID {
-		t.Fatalf("feed ID = %q, want %q", job.FeedID, feed.ID)
-	}
-}
-
-func TestPostgresStoreRefreshJobs(t *testing.T) {
-	database := openTestDB(t)
-	store := NewPostgresStore(database)
-	ctx := context.Background()
-	feed := testFeed(t, store, ctx)
-
-	if err := store.EnqueueRefresh(ctx, feed.ID, time.Now().UTC()); err != nil {
-		t.Fatalf("EnqueueRefresh returned error: %v", err)
-	}
-	job, err := store.ClaimRefresh(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("ClaimRefresh returned error: %v", err)
-	}
-	if job.FeedID != feed.ID || job.LeaseToken == "" || job.Attempts != 1 {
-		t.Fatalf("job = %#v", job)
-	}
-
-	_, err = store.ClaimRefresh(ctx, time.Minute)
-	if !errors.Is(err, ErrNoRefreshJob) {
-		t.Fatalf("ClaimRefresh error = %v, want %v", err, ErrNoRefreshJob)
-	}
-
-	retried, err := store.RetryRefresh(ctx, job.FeedID, job.LeaseToken, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("RetryRefresh returned error: %v", err)
-	}
-	if !retried {
-		t.Fatal("job was not retried")
-	}
-
-	job, err = store.ClaimRefresh(ctx, time.Minute)
-	if err != nil {
-		t.Fatalf("ClaimRefresh retry returned error: %v", err)
-	}
-	if job.Attempts != 2 {
-		t.Fatalf("attempts = %d, want 2", job.Attempts)
-	}
-
-	completed, err := store.CompleteRefresh(ctx, job.FeedID, job.LeaseToken)
-	if err != nil {
-		t.Fatalf("CompleteRefresh returned error: %v", err)
-	}
-	if !completed {
-		t.Fatal("job was not completed")
+	if len(feeds) != 0 {
+		t.Fatalf("due feeds after error = %#v, want none", feeds)
 	}
 }
 

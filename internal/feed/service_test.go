@@ -15,13 +15,17 @@ import (
 
 func TestAddCreatesFeedAndQueuesRefresh(t *testing.T) {
 	store := &refreshStore{}
-	svc := NewService(store, nil)
+	jobs := &refreshJobInserterFake{}
+	svc := NewServiceWithJobs(store, jobs, nil)
 	feed, err := svc.Add(context.Background(), "user-1", "https://example.com/feed.xml")
 	if err != nil {
 		t.Fatalf("Add returned error: %v", err)
 	}
-	if feed.ID == "" || store.queuedFeedID != feed.ID || store.subscriptionFeedID != feed.ID {
+	if feed.ID == "" || store.subscriptionFeedID != feed.ID {
 		t.Fatalf("feed = %#v", store.feed)
+	}
+	if len(jobs.args) != 1 || jobs.args[0].FeedID != feed.ID || jobs.args[0].FeedURL != feed.URL {
+		t.Fatalf("queued args = %#v", jobs.args)
 	}
 	if len(store.events) != 1 {
 		t.Fatalf("events = %#v", store.events)
@@ -58,14 +62,26 @@ func TestDeleteRemovesSubscriptionAndRecordsEvent(t *testing.T) {
 }
 
 func TestQueueRefresh(t *testing.T) {
-	store := &refreshStore{feed: core.Feed{ID: "feed-1"}}
-	svc := NewService(store, nil)
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: "https://example.com/feed"}}
+	jobs := &refreshJobInserterFake{}
+	svc := NewServiceWithJobs(store, jobs, nil)
 
 	if err := svc.QueueRefresh(context.Background(), store.feed.ID); err != nil {
 		t.Fatalf("QueueRefresh returned error: %v", err)
 	}
-	if store.queuedFeedID != store.feed.ID {
-		t.Fatalf("queued feed ID = %q, want %q", store.queuedFeedID, store.feed.ID)
+	if len(jobs.args) != 1 || jobs.args[0].FeedID != store.feed.ID {
+		t.Fatalf("queued args = %#v", jobs.args)
+	}
+}
+
+func TestRefreshJobSkipsStaleGeneration(t *testing.T) {
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: "https://example.com/feed"}}
+	svc := NewService(store, nil)
+	if err := svc.RefreshJob(context.Background(), RefreshArgs{FeedID: store.feed.ID, FeedURL: store.feed.URL, Generation: 42}); err != nil {
+		t.Fatalf("RefreshJob returned error: %v", err)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("stale job caused events: %#v", store.events)
 	}
 }
 
@@ -193,11 +209,24 @@ func TestSafeDialContextRejectsLocalhost(t *testing.T) {
 	}
 }
 
+type refreshJobInserterFake struct {
+	args []RefreshArgs
+}
+
+func (f *refreshJobInserterFake) InsertRefresh(_ context.Context, args RefreshArgs) error {
+	f.args = append(f.args, args)
+	return nil
+}
+
+func (f *refreshJobInserterFake) InsertRefreshBatch(_ context.Context, args []RefreshArgs) error {
+	f.args = append(f.args, args...)
+	return nil
+}
+
 type refreshStore struct {
 	feed                  core.Feed
 	items                 []core.Item
 	events                []core.Event
-	queuedFeedID          string
 	subscriptionFeedID    string
 	deletedSubscriptionID string
 	readItemID            string
@@ -285,11 +314,6 @@ func (s *refreshStore) MarkFeedRead(ctx context.Context, userID, feedID string) 
 
 func (s *refreshStore) MarkAllRead(ctx context.Context, userID string) error {
 	s.allReadUserID = userID
-	return nil
-}
-
-func (s *refreshStore) EnqueueRefresh(ctx context.Context, feedID string, availableAt time.Time) error {
-	s.queuedFeedID = feedID
 	return nil
 }
 
