@@ -19,7 +19,9 @@ make run
 make build
 ```
 
-The server listens on `:8080` by default. Override with `SPOOL_ADDR`.
+The default command starts the server, which listens on `:8080` by default.
+Override the address with `SPOOL_ADDR`. Run the feed refresh worker separately
+with `spool worker`; apply database migrations with `spool migrate`.
 
 Spool uses Postgres. Set `SPOOL_DATABASE_URL` before running, for example:
 
