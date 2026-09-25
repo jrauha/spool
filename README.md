@@ -16,10 +16,13 @@ Common commands:
 ```sh
 make test
 make run
+make watch
 make build
 ```
 
-The default command starts the server, which listens on `:8080` by default.
+`make watch` runs Air for the server, River worker, and scheduler; each role is
+rebuilt and restarted when Go files change. The default command starts only the
+server, which listens on `:8080` by default.
 Override the address with `SPOOL_ADDR`. Run feed processing with `spool worker`
 and periodic discovery with `spool scheduler`. River coordinates periodic jobs
 across active worker and scheduler clients.

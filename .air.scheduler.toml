@@ -2,8 +2,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "go build -o ./tmp/spool-server ./cmd/spool"
-bin = "./tmp/spool-server"
-args_bin = ["server"]
+cmd = "go build -o ./tmp/spool-scheduler ./cmd/spool"
+bin = "./tmp/spool-scheduler"
+args_bin = ["scheduler"]
 include_ext = ["go", "html", "css"]
 exclude_dir = [".git", "tmp", "vendor"]
