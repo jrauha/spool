@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/core"
 	"github.com/spool-reader/spool/internal/feed"
+	itemquery "github.com/spool-reader/spool/internal/query"
 )
 
 const (
@@ -41,13 +43,13 @@ func TestFormatDate(t *testing.T) {
 }
 
 func TestRedirectTargetUsesReturnTo(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=%2Ffeeds%2Ffeed-1%3Fpage%3D2"))
+	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=%2Ffeeds%2Ffeed-1%3Fcursor%3Dopaque"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if err := req.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := redirectTarget(req); got != "/feeds/feed-1?page=2" {
+	if got := redirectTarget(req); got != "/feeds/feed-1?cursor=opaque" {
 		t.Fatalf("redirectTarget = %q", got)
 	}
 }
@@ -56,12 +58,12 @@ func TestRedirectTargetUsesSafeReferrer(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/items/item-1/read", strings.NewReader("return_to=https%3A%2F%2Fevil.example%2F"))
 	req.Host = "spool.example"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", "https://spool.example/feeds/feed-1?page=2")
+	req.Header.Set("Referer", "https://spool.example/feeds/feed-1?cursor=opaque")
 	if err := req.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := redirectTarget(req); got != "/feeds/feed-1?page=2" {
+	if got := redirectTarget(req); got != "/feeds/feed-1?cursor=opaque" {
 		t.Fatalf("redirectTarget = %q", got)
 	}
 }
@@ -77,23 +79,6 @@ func TestRedirectTargetRejectsExternalReferrer(t *testing.T) {
 
 	if got := redirectTarget(req); got != "/" {
 		t.Fatalf("redirectTarget = %q, want /", got)
-	}
-}
-
-func TestPageNumber(t *testing.T) {
-	for _, test := range []struct {
-		path string
-		want int
-	}{
-		{path: "/", want: 1},
-		{path: "/?page=2", want: 2},
-		{path: "/?page=0", want: 1},
-		{path: "/?page=invalid", want: 1},
-	} {
-		req := httptest.NewRequest(http.MethodGet, test.path, nil)
-		if got := pageNumber(req); got != test.want {
-			t.Fatalf("pageNumber(%q) = %d, want %d", test.path, got, test.want)
-		}
 	}
 }
 
@@ -141,7 +126,6 @@ func TestHomeTemplateEscapesFeedContent(t *testing.T) {
 			Title:   `<script>alert(1)</script>`,
 			Summary: `<img src="x" onerror="alert(1)"><a href="javascript:alert(2)">bad</a><script>alert(3)</script>`,
 		}},
-		Page: firstPage,
 	}
 	rec := httptest.NewRecorder()
 
@@ -555,20 +539,41 @@ func TestAuthenticatedHome(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), testEmail) {
 		t.Fatalf("body = %q, want email", rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), `class="item-query"`) || !strings.Contains(rec.Body.String(), `href="/search"`) {
+		t.Fatalf("body should link to the dedicated search page: %s", rec.Body.String())
+	}
+}
+
+func TestSearchPageWithoutQuery(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, _ := newAuthenticatedFeedMux(t, store)
+	req := httptest.NewRequest(http.MethodGet, "/search", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Enter a query to search your items.") {
+		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if store.itemQueryCalls != 0 {
+		t.Fatalf("empty search executed %d queries", store.itemQueryCalls)
+	}
 }
 
 func TestAuthenticatedFeedPages(t *testing.T) {
+	const feedID = "11111111-1111-1111-1111-111111111111"
 	store := newServerFeedStore()
 	handler, session, userID := newAuthenticatedFeedMux(t, store)
-	store.addFeedForUser(userID, core.Feed{ID: "feed-1", URL: "https://example.com/feed.xml", Title: "Example", SiteURL: "https://example.com"})
-	store.items["item-1"] = core.Item{ID: "item-1", FeedID: "feed-1", URL: "https://example.com/one", Title: "First item"}
+	store.addFeedForUser(userID, core.Feed{ID: feedID, URL: "https://example.com/feed.xml", Title: "Example", SiteURL: "https://example.com"})
+	store.items["item-1"] = core.Item{ID: "item-1", FeedID: feedID, URL: "https://example.com/one", Title: "First item"}
 
 	for _, test := range []struct {
 		path string
 		want string
 	}{
 		{path: "/feeds", want: "Example"},
-		{path: "/feeds/feed-1", want: "First item"},
+		{path: "/feeds/" + feedID, want: "First item"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, test.path, nil)
 		req.AddCookie(session)
@@ -581,6 +586,69 @@ func TestAuthenticatedFeedPages(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), test.want) {
 			t.Fatalf("%s body = %q, want %q", test.path, rec.Body.String(), test.want)
 		}
+	}
+}
+
+func TestSearchQueriesItemsWithRSQL(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, userID := newAuthenticatedFeedMux(t, store)
+	store.addFeedForUser(userID, core.Feed{ID: "feed-1", URL: "https://example.com/feed.xml", Title: "Example"})
+	for index := 0; index <= itemsPerPage; index++ {
+		id := "item-" + strconv.Itoa(index)
+		store.items[id] = core.Item{ID: id, FeedID: "feed-1", Title: "Item " + strconv.Itoa(index)}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/search?mode=rsql&q=read%3D%3Dfalse", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `value="read==false"`) {
+		t.Fatalf("body does not preserve filter: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `cursor=`) ||
+		!strings.Contains(rec.Body.String(), `mode=rsql`) ||
+		!strings.Contains(rec.Body.String(), `q=read%3D%3Dfalse`) ||
+		strings.Contains(rec.Body.String(), `page=2`) {
+		t.Fatalf("body does not preserve filter with cursor pagination: %s", rec.Body.String())
+	}
+	if store.itemQuery.Filter == nil {
+		t.Fatal("RSQL filter was not passed to the query service")
+	}
+}
+
+func TestSearchUsesPlainText(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, _ := newAuthenticatedFeedMux(t, store)
+	req := httptest.NewRequest(http.MethodGet, "/search?mode=text&q=postgres+replication", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	comparison := store.itemQuery.Filter.Conjunctions[0].Terms[0].Comparison
+	if comparison.Selector != "text" || comparison.Values()[0] != "postgres replication" {
+		t.Fatalf("comparison = %#v", comparison)
+	}
+}
+
+func TestSearchRejectsInvalidRSQL(t *testing.T) {
+	store := newServerFeedStore()
+	handler, session, _ := newAuthenticatedFeedMux(t, store)
+	req := httptest.NewRequest(http.MethodGet, "/search?mode=rsql&q=title%3Dbad%3Dvalue", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
@@ -790,6 +858,8 @@ func newAuthenticatedFeedMux(t *testing.T, store *serverFeedStore) (http.Handler
 type serverFeedStore struct {
 	feeds                 map[string]core.Feed
 	items                 map[string]core.Item
+	itemQuery             core.ItemQuery
+	itemQueryCalls        int
 	subscriptions         map[string]map[string]bool
 	events                []core.Event
 	queuedFeedIDs         []string
@@ -897,33 +967,80 @@ func (s *serverFeedStore) ListFeedsForUser(ctx context.Context, userID string) (
 	return feeds, nil
 }
 
-func (s *serverFeedStore) ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
-	return s.itemsForFeed(feedID), nil
-}
-
-func (s *serverFeedStore) ListItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error) {
-	if !s.subscriptions[userID][feedID] {
-		return nil, core.ErrFeedNotFound
-	}
-	return s.itemsForFeed(feedID), nil
-}
-
-func (s *serverFeedStore) ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error) {
-	items := make([]core.Item, 0, len(s.items))
+func (s *serverFeedStore) QueryItemsForUser(ctx context.Context, userID string, query core.ItemQuery) ([]core.ItemMatch, error) {
+	s.itemQuery = query
+	s.itemQueryCalls++
+	feedID := queryFeedID(query.Filter)
+	items := make([]core.ItemMatch, 0, len(s.items))
 	for _, item := range s.items {
-		items = append(items, item)
-	}
-	return items, nil
-}
-
-func (s *serverFeedStore) ListLatestItemsForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error) {
-	items := make([]core.Item, 0, len(s.items))
-	for _, item := range s.items {
-		if s.subscriptions[userID][item.FeedID] {
-			items = append(items, item)
+		if s.subscriptions[userID][item.FeedID] && (feedID == "" || item.FeedID == feedID) {
+			sortAt := item.CreatedAt
+			if item.PublishedAt != nil {
+				sortAt = *item.PublishedAt
+			}
+			if sortAt.IsZero() {
+				sortAt = time.Unix(1, 0).UTC()
+			}
+			items = append(items, core.ItemMatch{Item: item, FeedTitle: s.feeds[item.FeedID].Title, SortAt: sortAt})
 		}
 	}
+	sort.Slice(items, func(left, right int) bool {
+		if items[left].SortAt.Equal(items[right].SortAt) {
+			if query.Sort == core.ItemQuerySortOldest {
+				return items[left].ID < items[right].ID
+			}
+			return items[left].ID > items[right].ID
+		}
+		if query.Sort == core.ItemQuerySortOldest {
+			return items[left].SortAt.Before(items[right].SortAt)
+		}
+		return items[left].SortAt.After(items[right].SortAt)
+	})
+	if query.Cursor != nil {
+		index := len(items)
+		for candidate := range items {
+			if items[candidate].ID == query.Cursor.ItemID {
+				index = candidate
+				break
+			}
+		}
+		if query.Cursor.Before {
+			items = items[:index]
+			if len(items) > query.Limit {
+				items = items[len(items)-query.Limit:]
+			}
+			return items, nil
+		}
+		if index < len(items) {
+			items = items[index+1:]
+		} else {
+			items = nil
+		}
+	}
+	if len(items) > query.Limit {
+		items = items[:query.Limit]
+	}
 	return items, nil
+}
+
+func queryFeedID(expression *itemquery.Expression) string {
+	if expression == nil {
+		return ""
+	}
+	for _, conjunction := range expression.Conjunctions {
+		for _, term := range conjunction.Terms {
+			if term.Comparison != nil && term.Comparison.Selector == "feed.id" {
+				values := term.Comparison.Values()
+				if len(values) == 1 {
+					return values[0]
+				}
+			}
+			if feedID := queryFeedID(term.Nested); feedID != "" {
+				return feedID
+			}
+		}
+	}
+	return ""
 }
 
 func (s *serverFeedStore) MarkItemRead(ctx context.Context, userID, itemID string) error {
@@ -994,16 +1111,6 @@ func (s *serverFeedStore) UpsertItem(ctx context.Context, item core.Item) (core.
 func (s *serverFeedStore) AppendEvent(ctx context.Context, event core.Event) (core.Event, error) {
 	s.events = append(s.events, event)
 	return event, nil
-}
-
-func (s *serverFeedStore) itemsForFeed(feedID string) []core.Item {
-	items := make([]core.Item, 0)
-	for _, item := range s.items {
-		if item.FeedID == feedID {
-			items = append(items, item)
-		}
-	}
-	return items
 }
 
 func (s *serverFeedStore) nextFeedID() string {

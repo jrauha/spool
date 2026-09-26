@@ -44,10 +44,7 @@ type Store interface {
 	FindFeedForUser(ctx context.Context, userID, feedID string) (core.Feed, error)
 	ListFeeds(ctx context.Context) ([]core.Feed, error)
 	ListFeedsForUser(ctx context.Context, userID string) ([]core.Feed, error)
-	ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error)
-	ListItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error)
-	ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error)
-	ListLatestItemsForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error)
+	QueryItemsForUser(ctx context.Context, userID string, query core.ItemQuery) ([]core.ItemMatch, error)
 	MarkItemRead(ctx context.Context, userID, itemID string) error
 	MarkItemUnread(ctx context.Context, userID, itemID string) error
 	MarkFeedRead(ctx context.Context, userID, feedID string) error
@@ -88,22 +85,6 @@ func (s *Service) Find(ctx context.Context, id string) (core.Feed, error) {
 
 func (s *Service) FindForUser(ctx context.Context, userID, id string) (core.Feed, error) {
 	return s.store.FindFeedForUser(ctx, userID, id)
-}
-
-func (s *Service) Latest(ctx context.Context, limit, offset int) ([]core.Item, error) {
-	return s.store.ListLatestItems(ctx, limit, offset)
-}
-
-func (s *Service) LatestForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error) {
-	return s.store.ListLatestItemsForUser(ctx, userID, limit, offset)
-}
-
-func (s *Service) Items(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
-	return s.store.ListItems(ctx, feedID, limit, offset)
-}
-
-func (s *Service) ItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error) {
-	return s.store.ListItemsForUser(ctx, userID, feedID, limit, offset)
 }
 
 func (s *Service) MarkRead(ctx context.Context, userID, itemID string) error {

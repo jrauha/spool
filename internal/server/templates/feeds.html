@@ -10,7 +10,7 @@
 <div id="spool-app" class="app-shell" data-ui-region="app">
   <header id="spool-header" class="site-header" data-ui-region="header">
     <a class="brand" href="/">Spool</a>
-    <nav aria-label="Main navigation"><a href="/">Reading</a><a aria-current="page" href="/feeds">Feeds</a></nav>
+    <nav aria-label="Main navigation"><a href="/">Reading</a><a href="/search">Search</a><a aria-current="page" href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
   </header>
   <main id="spool-main" class="content-column" data-ui-region="feed-management">

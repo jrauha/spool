@@ -71,15 +71,16 @@ a:hover { text-decoration: underline; }
 .plugin-slot { margin-top: var(--space-2); }
 .feed-actions, .plugin-slot--item-actions, .plugin-slot--feed-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
-.add-feed { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); padding: var(--space-3); border: 1px solid var(--color-rule); }
-.add-feed label { color: var(--color-muted); font-size: 0.75rem; }
-.add-feed div { display: flex; gap: var(--space-2); }
+.add-feed, .item-query { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); padding: var(--space-3); border: 1px solid var(--color-rule); }
+.add-feed label, .item-query label { color: var(--color-muted); font-size: 0.75rem; }
+.add-feed div, .item-query div { display: flex; align-items: center; gap: var(--space-2); }
 .feed-row { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); }
 .feed-description, .feed-error { margin-bottom: 0; }
 .feed-error, .notice-error { color: #ff7b72; }
 
-input { width: 100%; min-width: 0; padding: 0.4rem 0.5rem; color: var(--color-ink); background: #161b22; border: 1px solid var(--color-rule); border-radius: 0; font: inherit; }
-input:focus { outline: 1px solid var(--color-focus); border-color: var(--color-focus); }
+input, select { min-width: 0; padding: 0.4rem 0.5rem; color: var(--color-ink); background: #161b22; border: 1px solid var(--color-rule); border-radius: 0; font: inherit; }
+input { width: 100%; }
+input:focus, select:focus { outline: 1px solid var(--color-focus); border-color: var(--color-focus); }
 button { padding: 0.35rem 0.5rem; border: 1px solid var(--color-rule); border-radius: 0; background: transparent; color: var(--color-link); font: inherit; white-space: nowrap; cursor: pointer; }
 button::before { content: "["; } button::after { content: "]"; }
 button:hover { border-color: var(--color-link); color: var(--color-ink); }
@@ -104,5 +105,5 @@ button:hover { border-color: var(--color-link); color: var(--color-ink); }
   .app-layout { display: block; }
   .feed-sidebar { display: none; }
   .account { display: none; }
-  .feed-heading, .feed-row, .add-feed div { flex-direction: column; gap: var(--space-2); }
+  .feed-heading, .feed-row, .add-feed div, .item-query div { flex-direction: column; align-items: stretch; gap: var(--space-2); }
 }

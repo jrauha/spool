@@ -11,7 +11,7 @@
 <div id="spool-app" class="app-shell" data-ui-region="app">
   <header id="spool-header" class="site-header" data-ui-region="header">
     <a class="brand" href="/">Spool</a>
-    <nav aria-label="Main navigation"><a href="/">Reading</a><a href="/feeds">Feeds</a></nav>
+    <nav aria-label="Main navigation"><a href="/">Reading</a><a href="/search">Search</a><a href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}}</div>
   </header>
   <div class="app-layout">
@@ -40,11 +40,10 @@
       <li class="empty-state">No items yet.</li>
     {{end}}
     </ul>
-    {{if or .PreviousPage .HasNextPage}}
+    {{if or .PreviousURL .NextURL}}
     <nav class="pagination" aria-label="Pagination">
-      {{if .PreviousPage}}<a href="/feeds/{{.Feed.ID}}?page={{.PreviousPage}}">Previous</a>{{else}}<span>Previous</span>{{end}}
-      <span>Page {{.Page}}</span>
-      {{if .HasNextPage}}<a href="/feeds/{{.Feed.ID}}?page={{.NextPage}}">Next</a>{{else}}<span>Next</span>{{end}}
+      {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous</a>{{else}}<span>Previous</span>{{end}}
+      {{if .NextURL}}<a href="{{.NextURL}}">Next</a>{{else}}<span>Next</span>{{end}}
     </nav>
     {{end}}
   </main>

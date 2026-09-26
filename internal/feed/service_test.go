@@ -115,6 +115,115 @@ func TestMarkFeedReadAppendsEvent(t *testing.T) {
 	}
 }
 
+func TestQueryItemsUsesRSQLAndReturnsCursor(t *testing.T) {
+	now := time.Now().UTC()
+	store := &refreshStore{queryMatches: []core.ItemMatch{
+		{Item: core.Item{ID: "item-1"}, SortAt: now, Rank: 0.8},
+		{Item: core.Item{ID: "item-2"}, SortAt: now.Add(-time.Minute), Rank: 0.7},
+	}}
+	svc := NewService(store, nil)
+
+	page, err := svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{
+		Filter: `text=search='postgres';read==false`,
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
+	}
+	if len(page.Items) != 1 || page.PreviousCursor != "" || page.NextCursor == "" {
+		t.Fatalf("page = %#v", page)
+	}
+	if store.itemQuery.Sort != core.ItemQuerySortRelevance || store.itemQuery.Limit != 2 || store.itemQuery.Filter == nil {
+		t.Fatalf("store query = %#v", store.itemQuery)
+	}
+
+	store.queryMatches = []core.ItemMatch{{Item: core.Item{ID: "item-2"}, SortAt: now.Add(-time.Minute), Rank: 0.7}}
+	secondPage, err := svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{
+		Filter: `text=search='postgres';read==false`,
+		Limit:  1,
+		Cursor: page.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("cursor query returned error: %v", err)
+	}
+	if store.itemQuery.Cursor == nil || store.itemQuery.Cursor.ItemID != "item-1" || store.itemQuery.Cursor.Before {
+		t.Fatalf("store cursor = %#v", store.itemQuery.Cursor)
+	}
+	if secondPage.PreviousCursor == "" || secondPage.NextCursor != "" {
+		t.Fatalf("second page = %#v", secondPage)
+	}
+
+	store.queryMatches = []core.ItemMatch{{Item: core.Item{ID: "item-1"}, SortAt: now, Rank: 0.8}}
+	previousPage, err := svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{
+		Filter: `text=search='postgres';read==false`,
+		Limit:  1,
+		Cursor: secondPage.PreviousCursor,
+	})
+	if err != nil {
+		t.Fatalf("previous cursor query returned error: %v", err)
+	}
+	if store.itemQuery.Cursor == nil || !store.itemQuery.Cursor.Before || store.itemQuery.Cursor.ItemID != "item-2" {
+		t.Fatalf("previous store cursor = %#v", store.itemQuery.Cursor)
+	}
+	if len(previousPage.Items) != 1 || previousPage.Items[0].ID != "item-1" ||
+		previousPage.PreviousCursor != "" || previousPage.NextCursor == "" {
+		t.Fatalf("previous page = %#v", previousPage)
+	}
+}
+
+func TestQueryItemsAcceptsPlainText(t *testing.T) {
+	store := &refreshStore{}
+	svc := NewService(store, nil)
+
+	if _, err := svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{Text: " postgres replication "}); err != nil {
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
+	}
+	if store.itemQuery.Sort != core.ItemQuerySortRelevance || store.itemQuery.Filter == nil {
+		t.Fatalf("store query = %#v", store.itemQuery)
+	}
+	comparison := store.itemQuery.Filter.Conjunctions[0].Terms[0].Comparison
+	if comparison.Selector != "text" || comparison.Values()[0] != "postgres replication" {
+		t.Fatalf("comparison = %#v", comparison)
+	}
+}
+
+func TestQueryItemsRejectsInvalidInput(t *testing.T) {
+	svc := NewService(&refreshStore{}, nil)
+	for _, input := range []ItemQuery{
+		{Text: "postgres", Filter: "read==false"},
+		{Filter: "title=bad=value"},
+		{Filter: "unknown==value"},
+		{Filter: "read>2025-01-01T00:00:00Z"},
+		{Filter: "read==maybe"},
+		{Filter: "feed.id==not-a-uuid"},
+		{Filter: "date>=yesterday"},
+		{Limit: maxItemQueryLimit + 1},
+		{Sort: ItemSortRelevance},
+		{Cursor: "not-a-cursor"},
+	} {
+		if _, err := svc.QueryItemsForUser(context.Background(), "user-1", input); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("QueryItemsForUser(%#v) error = %v, want ErrInvalidQuery", input, err)
+		}
+	}
+}
+
+func TestQueryCursorCannotBeReusedWithDifferentFilter(t *testing.T) {
+	now := time.Now().UTC()
+	store := &refreshStore{queryMatches: []core.ItemMatch{
+		{Item: core.Item{ID: "item-1"}, SortAt: now},
+		{Item: core.Item{ID: "item-2"}, SortAt: now.Add(-time.Minute)},
+	}}
+	svc := NewService(store, nil)
+	page, err := svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{Filter: "read==false", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.QueryItemsForUser(context.Background(), "user-1", ItemQuery{Filter: "read==true", Limit: 1, Cursor: page.NextCursor})
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("cursor reuse error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func TestValidFeedURLRejectsCredentialsAndUnsafePorts(t *testing.T) {
 	for _, rawURL := range []string{"http://user:pass@example.com/feed", "https://example.com:8080/feed"} {
 		parsedURL, err := url.Parse(rawURL)
@@ -226,6 +335,8 @@ func (f *refreshJobInserterFake) InsertRefreshBatch(_ context.Context, args []Re
 type refreshStore struct {
 	feed                  core.Feed
 	items                 []core.Item
+	queryMatches          []core.ItemMatch
+	itemQuery             core.ItemQuery
 	events                []core.Event
 	subscriptionFeedID    string
 	deletedSubscriptionID string
@@ -281,20 +392,9 @@ func (s *refreshStore) DeleteSubscription(ctx context.Context, userID, feedID st
 	return nil
 }
 
-func (s *refreshStore) ListItems(ctx context.Context, feedID string, limit, offset int) ([]core.Item, error) {
-	return s.items, nil
-}
-
-func (s *refreshStore) ListItemsForUser(ctx context.Context, userID, feedID string, limit, offset int) ([]core.Item, error) {
-	return s.items, nil
-}
-
-func (s *refreshStore) ListLatestItems(ctx context.Context, limit, offset int) ([]core.Item, error) {
-	return s.items, nil
-}
-
-func (s *refreshStore) ListLatestItemsForUser(ctx context.Context, userID string, limit, offset int) ([]core.Item, error) {
-	return s.items, nil
+func (s *refreshStore) QueryItemsForUser(ctx context.Context, userID string, query core.ItemQuery) ([]core.ItemMatch, error) {
+	s.itemQuery = query
+	return s.queryMatches, nil
 }
 
 func (s *refreshStore) MarkItemRead(ctx context.Context, userID, itemID string) error {

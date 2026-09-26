@@ -3,6 +3,8 @@ package core
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/spool-reader/spool/internal/query"
 )
 
 type Feed struct {
@@ -41,6 +43,35 @@ type Item struct {
 	ReadAt      *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type ItemMatch struct {
+	Item
+	FeedTitle string
+	SortAt    time.Time
+	Rank      float64
+}
+
+type ItemQuerySort string
+
+const (
+	ItemQuerySortNewest    ItemQuerySort = "newest"
+	ItemQuerySortOldest    ItemQuerySort = "oldest"
+	ItemQuerySortRelevance ItemQuerySort = "relevance"
+)
+
+type ItemQueryCursor struct {
+	SortAt time.Time
+	ItemID string
+	Rank   float64
+	Before bool
+}
+
+type ItemQuery struct {
+	Filter *query.Expression
+	Sort   ItemQuerySort
+	Limit  int
+	Cursor *ItemQueryCursor
 }
 
 type Event struct {
