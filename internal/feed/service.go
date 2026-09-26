@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spool-reader/spool/internal/core"
 )
@@ -222,10 +223,10 @@ func (s *Service) refresh(ctx context.Context, feed core.Feed) error {
 		item, created, err := s.store.UpsertItem(ctx, core.Item{
 			FeedID:      feed.ID,
 			GUID:        parsedItem.GUID,
-			URL:         parsedItem.URL,
-			Title:       parsedItem.Title,
-			Summary:     parsedItem.Summary,
-			Author:      parsedItem.Author,
+			URL:         truncateItemField(parsedItem.URL, core.MaxItemURLChars),
+			Title:       truncateItemField(parsedItem.Title, core.MaxItemTitleChars),
+			Summary:     truncateItemField(parsedItem.Summary, core.MaxItemSummaryChars),
+			Author:      truncateItemField(parsedItem.Author, core.MaxItemAuthorChars),
 			PublishedAt: parsedItem.PublishedAt,
 		})
 		if err != nil {
@@ -238,6 +239,13 @@ func (s *Service) refresh(ctx context.Context, feed core.Feed) error {
 		}
 	}
 	return nil
+}
+
+func truncateItemField(value string, limit int) string {
+	if utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit])
 }
 
 func (s *Service) enqueueRefresh(ctx context.Context, feed core.Feed) error {

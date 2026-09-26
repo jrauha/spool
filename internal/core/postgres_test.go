@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,22 @@ func TestPostgresStoreItems(t *testing.T) {
 	}
 	if found.ID != item.ID || found.Summary != item.Summary {
 		t.Fatalf("found item = %#v, want %#v", found, item)
+	}
+
+	oversized := []struct {
+		name string
+		item Item
+	}{
+		{name: "title", item: Item{GUID: "long-title", Title: strings.Repeat("t", MaxItemTitleChars+1)}},
+		{name: "author", item: Item{GUID: "long-author", Title: "Item", Author: strings.Repeat("a", MaxItemAuthorChars+1)}},
+		{name: "summary", item: Item{GUID: "long-summary", Title: "Item", Summary: strings.Repeat("s", MaxItemSummaryChars+1)}},
+		{name: "URL", item: Item{GUID: "long-url", Title: "Item", URL: strings.Repeat("u", MaxItemURLChars+1)}},
+	}
+	for _, test := range oversized {
+		test.item.FeedID = feed.ID
+		if _, _, err := store.UpsertItem(ctx, test.item); err == nil {
+			t.Errorf("UpsertItem accepted oversized %s", test.name)
+		}
 	}
 }
 
