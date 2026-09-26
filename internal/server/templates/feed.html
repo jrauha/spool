@@ -29,10 +29,15 @@
     {{if .Feed.LastError}}<p class="notice notice-error">Last refresh failed: {{.Feed.LastError}}</p>{{end}}
     <ul class="item-list">
     {{range .Items}}
+      {{$thumbnail := itemAsset .Assets "thumbnail"}}
       <li id="item-{{.ID}}" class="item-row{{if .ReadAt}} item-row--read{{end}}" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
-        {{with .PublishedAt}}<p class="item-source" data-ui-region="item-source">{{formatDate .}}</p>{{end}}
-        <a class="item-title" data-ui-region="item-title" href="{{.URL}}"{{if not .ReadAt}} data-read-url="/items/{{.ID}}/read" data-csrf-token="{{$.CSRFToken}}"{{end}}>{{.Title}}</a>
-        {{if .Summary}}<div class="item-summary" data-ui-region="item-summary">{{richText .Summary}}</div>{{end}}
+        <div class="item-content{{if $thumbnail}} item-content--with-thumbnail{{end}}">
+          <div class="item-content__text">
+            {{with .PublishedAt}}<p class="item-source" data-ui-region="item-source">{{formatDate .}}</p>{{end}}
+            <a class="item-title" data-ui-region="item-title" href="{{.URL}}"{{if not .ReadAt}} data-read-url="/items/{{.ID}}/read" data-csrf-token="{{$.CSRFToken}}"{{end}}>{{.Title}}</a>
+          </div>
+          {{if $thumbnail}}<img class="item-thumbnail" src="/assets/{{$thumbnail.AssetID}}" alt="">{{end}}
+        </div>
         <div class="plugin-slot plugin-slot--item-metadata" data-plugin-slot="item.metadata"></div>
         <div class="plugin-slot plugin-slot--item-actions" data-plugin-slot="item.actions"></div>
       </li>

@@ -1,0 +1,10 @@
+{
+  "ops": [
+    {
+      "op": "asset.attach",
+      "itemId": "item-id",
+      "role": "thumbnail",
+      "url": "https://example.com/image.jpg"
+    }
+  ]
+}

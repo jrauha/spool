@@ -29,6 +29,11 @@ across active worker and scheduler clients.
 
 Run `spool migrate` to apply Spool and River schema migrations.
 
+For containers, `docker compose up --build` runs Postgres, migrations, the
+server, worker, and scheduler. Set `SPOOL_SETUP_TOKEN` before initial setup.
+The server and worker share the persistent `spool-home-data` volume for cached
+assets.
+
 Spool uses Postgres. Set `SPOOL_DATABASE_URL` before running, for example:
 
 ```sh

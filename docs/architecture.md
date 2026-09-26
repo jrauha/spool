@@ -19,9 +19,10 @@ The Go server owns the basic reader experience:
 - plugin discovery and execution
 - plugin delivery logs
 - extension fields
-- assets and entity asset attachments
+- cached assets and item asset attachments
 
-Optional behavior should live in plugins rather than the core.
+The reader's thumbnail pipeline lives in core; optional image roles can be
+provided by plugins.
 
 ## Data model
 
@@ -36,9 +37,20 @@ Core tables:
 - `plugins`
 - `entity_fields`
 - `assets`
-- `entity_assets`
+- `item_assets`
 
-Plugins do not run database migrations in v1. They may store private files under `plugin-data/<plugin-name>/` and may extend core entities through validated field and asset operations.
+`assets` records cached bytes (ID, media type, size, checksum, creation time);
+files live under `$SPOOL_HOME/assets/` with opaque names derived from asset IDs.
+`item_assets` attaches an asset to an item by role, with one asset per item and
+role. The thumbnail uses the `thumbnail` role. Deleting an item removes its
+attachments; unreferenced asset records and files are cleaned up separately.
+There is no feed asset attachment or discovery checkpoint table. `items.url`
+and `items.image_url` hold the page URL and preferred feed-provided image URL
+used as crawl inputs, not local cache URLs.
+
+Plugins do not run database migrations in v1. They may store private files under
+`plugin-data/<plugin-name>/` and may extend core entities through validated
+field and item asset operations.
 
 ## Background jobs
 
@@ -57,10 +69,30 @@ error; manual refreshes can still enqueue a new job. Transient errors use
 River retries, while known permanent HTTP errors cancel the job. River schema
 migrations run through `spool migrate`.
 
+New items and changes to an item's page URL or feed-provided image URL enqueue
+unique thumbnail jobs on a low-concurrency queue when at least one input is
+present. Clearing both inputs removes the thumbnail attachment in the item
+upsert transaction without a crawl. The item upsert and River insert happen in
+one database transaction, so a failed enqueue cannot lose a crawl. Unchanged
+items do not enqueue jobs; River retries failures and deduplicates jobs only
+while they are active. Workers prefer the feed image URL, otherwise inspect
+page metadata, then fetch and validate raster images. Before storage,
+still-image sources are center-cropped to 16:10 and downscaled to at most
+480×300. Opaque images are encoded as JPEG at quality 82, while transparency
+is preserved as PNG.
+Animated GIFs remain unchanged. Workers write cache files atomically and
+replace the item's `thumbnail` attachment only when the job's image inputs are
+still current. A definitive lack of an image removes that attachment. The
+server serves assets through authenticated local URLs,
+checking access via the attached item and the user's subscription. Periodic
+cleanup removes unreferenced asset records and files after a grace period.
+
 ## Runtime layout
 
 ```text
 $SPOOL_HOME/
+  assets/
+    <asset-id>
   site/
     pack/
       local/
@@ -81,6 +113,7 @@ $SPOOL_HOME/
 - `start/` contains enabled plugins.
 - `opt/` contains installed but disabled plugins.
 - `plugin-data/<name>/` is private plugin filesystem state.
+- `assets/` stores cached bytes shared by the server and workers.
 
 ## Plugin model
 
@@ -175,6 +208,7 @@ Invocation JSON is sent on stdin:
       "id": "item-id",
       "feedId": "feed-id",
       "url": "https://example.com/post",
+      "imageUrl": "https://example.com/image.jpg",
       "title": "Example post",
       "summary": "..."
     }
@@ -189,19 +223,9 @@ Plugin logs go to stderr. Plugin responses go to stdout:
   "ops": [
     {
       "op": "asset.attach",
-      "entity": "item",
-      "entityId": "item-id",
-      "role": "hero_image",
-      "kind": "image",
-      "url": "https://example.com/image.jpg",
-      "replace": true
-    },
-    {
-      "op": "field.set",
-      "entity": "item",
-      "entityId": "item-id",
-      "name": "hero_image",
-      "value": "https://example.com/image.jpg"
+      "itemId": "item-id",
+      "role": "thumbnail",
+      "url": "https://example.com/image.jpg"
     }
   ]
 }
@@ -258,8 +282,9 @@ First-party plugins use the same external plugin format as third-party plugins.
 
 Initial plugins:
 
-- `item-images` — fetch item pages, extract Open Graph/Twitter image, attach `hero_image` asset.
-- `feed-icons` — discover feed/site favicons and attach feed icon asset.
+- `item-images` — fetch item pages, extract Open Graph/Twitter image, attach a `thumbnail` asset.
+- `feed-icons` — discover feed/site favicon URLs for feed metadata; caching
+  feed icons would require a separate feed attachment model.
 - `opml` — import/export subscriptions.
 - `webhooks` — deliver selected events to configured URLs.
 - `rules` — user-defined item automation.

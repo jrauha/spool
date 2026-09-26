@@ -36,6 +36,8 @@ const (
 	MaxItemAuthorChars  = 500
 	MaxItemSummaryChars = 100000
 	MaxItemURLChars     = 4096
+
+	ItemAssetRoleThumbnail = "thumbnail"
 )
 
 type Item struct {
@@ -43,13 +45,34 @@ type Item struct {
 	FeedID      string
 	GUID        string
 	URL         string
+	ImageURL    string
 	Title       string
 	Summary     string
 	Author      string
+	Assets      []AssetAttachment
 	PublishedAt *time.Time
 	ReadAt      *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type Asset struct {
+	ID        string
+	MediaType string
+	ByteSize  int64
+	SHA256    string
+	CreatedAt time.Time
+}
+
+type AssetAttachment struct {
+	AssetID   string `json:"assetId"`
+	Role      string `json:"role"`
+	MediaType string `json:"mediaType"`
+}
+
+type ItemImageInputs struct {
+	PageURL  string
+	ImageURL string
 }
 
 type ItemMatch struct {

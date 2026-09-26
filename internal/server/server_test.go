@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,6 +140,107 @@ func TestHomeTemplateEscapesFeedContent(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "&lt;script&gt;alert(1)&lt;/script&gt;") {
 		t.Fatalf("rendered home does not escape script text: %s", rec.Body.String())
+	}
+}
+
+func TestAssetHandlerServesCachedImage(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "asset-*")
+	if err != nil {
+		t.Fatalf("CreateTemp returned error: %v", err)
+	}
+	defer file.Close()
+	if _, err := file.Write([]byte("png-data")); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		t.Fatalf("Seek returned error: %v", err)
+	}
+
+	provider := &staticAssetProvider{file: file, mimeType: "image/png"}
+	app := &App{assets: provider}
+	req := httptest.NewRequest(http.MethodGet, "/assets/12345678-1234-1234-1234-123456789abc", nil)
+	req.SetPathValue("id", "12345678-1234-1234-1234-123456789abc")
+	user := auth.User{ID: "reader-1"}
+	req = req.WithContext(context.WithValue(req.Context(), userContextKey, user))
+	rec := httptest.NewRecorder()
+	app.asset(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Body.String() != "png-data" {
+		t.Fatalf("response = (%d, %#v, %q)", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if provider.userID != user.ID {
+		t.Fatalf("asset lookup user ID = %q, want %q", provider.userID, user.ID)
+	}
+}
+
+func TestAssetRouteRequiresAuthentication(t *testing.T) {
+	provider := &staticAssetProvider{}
+	handler := newMuxWithAssets(nil, auth.NewService(newServerAuthStore()), nil, false, nil, nil, "", provider)
+	req := httptest.NewRequest(http.MethodGet, "/assets/12345678-1234-1234-1234-123456789abc", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("unauthenticated asset response = (%d, %q)", rec.Code, rec.Header().Get("Location"))
+	}
+	if provider.userID != "" {
+		t.Fatalf("unauthenticated request looked up asset for %q", provider.userID)
+	}
+}
+
+type staticAssetProvider struct {
+	file     *os.File
+	mimeType string
+	userID   string
+}
+
+func (p *staticAssetProvider) OpenImageForUser(_ context.Context, userID, _ string) (*os.File, string, error) {
+	p.userID = userID
+	return p.file, p.mimeType, nil
+}
+
+func TestItemTemplatesDoNotRenderItemBodyText(t *testing.T) {
+	data := pageData{Items: []core.Item{{ID: "item-1", Summary: "BODY-TEXT-MUST-NOT-RENDER"}}}
+	rec := httptest.NewRecorder()
+	render(rec, "home.html", data)
+	if strings.Contains(rec.Body.String(), "BODY-TEXT-MUST-NOT-RENDER") {
+		t.Fatalf("rendered item includes body text: %s", rec.Body.String())
+	}
+	for _, path := range []string{"templates/home.html", "templates/feed.html", "templates/search.html"} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if strings.Contains(string(content), ".Summary") {
+			t.Errorf("template %q renders item body text", path)
+		}
+	}
+}
+
+func TestItemTemplatesRenderLocalThumbnailAsset(t *testing.T) {
+	assetID := "12345678-1234-1234-1234-123456789abc"
+	data := pageData{Items: []core.Item{{
+		ID:     "item-1",
+		Assets: []core.AssetAttachment{{AssetID: assetID, Role: core.ItemAssetRoleThumbnail}},
+	}}}
+	rec := httptest.NewRecorder()
+	render(rec, "home.html", data)
+	if !strings.Contains(rec.Body.String(), `src="/assets/`+assetID+`"`) {
+		t.Fatalf("rendered page has no local asset URL: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `class="item-content item-content--with-thumbnail"`) {
+		t.Fatalf("rendered page does not use the thumbnail article layout: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `src="https://`) {
+		t.Fatalf("rendered page contains a remote thumbnail URL: %s", rec.Body.String())
+	}
+
+	for _, path := range []string{"templates/home.html", "templates/feed.html", "templates/search.html"} {
+		content, err := templateFiles.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		if !strings.Contains(string(content), `src="/assets/{{$thumbnail.AssetID}}"`) {
+			t.Errorf("template %q does not render local assets", path)
+		}
 	}
 }
 
@@ -1106,6 +1208,19 @@ func (s *serverFeedStore) UpsertItem(ctx context.Context, item core.Item) (core.
 	_, exists := s.items[item.ID]
 	s.items[item.ID] = item
 	return item, !exists, nil
+}
+
+func (s *serverFeedStore) UpsertItemWithHook(ctx context.Context, item core.Item, hook core.ItemUpsertHook) (core.Item, bool, error) {
+	item, created, err := s.UpsertItem(ctx, item)
+	if err != nil {
+		return core.Item{}, false, err
+	}
+	if hook != nil && created {
+		if err := hook(ctx, nil, item); err != nil {
+			return core.Item{}, false, err
+		}
+	}
+	return item, created, nil
 }
 
 func (s *serverFeedStore) AppendEvent(ctx context.Context, event core.Event) (core.Event, error) {

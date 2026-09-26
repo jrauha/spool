@@ -2,6 +2,7 @@ package feed
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spool-reader/spool/internal/core"
+	"github.com/spool-reader/spool/internal/safehttp"
 )
 
 func TestAddCreatesFeedAndQueuesRefresh(t *testing.T) {
@@ -31,6 +33,18 @@ func TestAddCreatesFeedAndQueuesRefresh(t *testing.T) {
 	}
 	if len(store.events) != 1 {
 		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestResolveItemMetaURL(t *testing.T) {
+	if got := resolveItemMetaURL("https://example.com/articles/one", "../comments"); got != "https://example.com/comments" {
+		t.Fatalf("resolved relative comments URL = %q", got)
+	}
+	if got := resolveItemMetaURL("https://example.com/articles/one", "javascript:alert(1)"); got != "" {
+		t.Fatalf("resolved unsafe comments URL = %q, want empty", got)
+	}
+	if got := resolveItemMetaURL("https://example.com/articles/one", "#comments"); got != "https://example.com/articles/one#comments" {
+		t.Fatalf("resolved comments fragment = %q", got)
 	}
 }
 
@@ -242,13 +256,14 @@ func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<rss><channel>
 			<title>Example</title><description>News</description><link>https://example.com</link>
-			<item><guid>one</guid><title>First</title><link>https://example.com/one</link></item>
+			<item><guid>one</guid><title>First</title><link>https://example.com/one</link><enclosure url="https://example.com/one/image.png" type="image/png" length="42"/></item>
 		</channel></rss>`))
 	}))
 	defer server.Close()
 
 	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
-	svc := NewService(store, server.Client())
+	itemHooks := &itemUpsertHookFake{}
+	svc := NewServiceWithItemUpsertHook(store, nil, itemHooks.record, server.Client())
 
 	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
 		t.Fatalf("Refresh returned error: %v", err)
@@ -256,11 +271,74 @@ func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 	if store.feed.Title != "Example" || store.feed.RefreshedAt == nil {
 		t.Fatalf("feed = %#v", store.feed)
 	}
-	if len(store.items) != 1 || store.items[0].GUID != "one" {
+	if len(store.items) != 1 || store.items[0].GUID != "one" || store.items[0].ImageURL != "https://example.com/one/image.png" {
 		t.Fatalf("items = %#v", store.items)
 	}
 	if len(store.events) != 2 {
 		t.Fatalf("events = %#v", store.events)
+	}
+	if len(itemHooks.items) != 1 || itemHooks.items[0].ID != "item-1" || itemHooks.items[0].URL != "https://example.com/one" || itemHooks.items[0].ImageURL != "https://example.com/one/image.png" {
+		t.Fatalf("item upsert hooks = %#v", itemHooks.items)
+	}
+}
+
+func TestRefreshInvokesItemHookOnlyWhenImageInputsChange(t *testing.T) {
+	feedBody := `<rss><channel><title>Example</title><item><guid>one</guid><title>First</title><link>https://example.com/one</link><enclosure url="https://cdn.example.com/one.png" type="image/png"/></item></channel></rss>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(feedBody))
+	}))
+	defer server.Close()
+
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
+	itemHooks := &itemUpsertHookFake{}
+	svc := NewServiceWithItemUpsertHook(store, nil, itemHooks.record, server.Client())
+
+	for range 2 {
+		if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+			t.Fatalf("Refresh returned error: %v", err)
+		}
+	}
+	if len(itemHooks.items) != 1 {
+		t.Fatalf("unchanged refresh called hook %d times, want 1", len(itemHooks.items))
+	}
+	feedBody = strings.Replace(feedBody, "<title>First</title>", "<title>First updated</title>", 1)
+	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("Refresh after title change returned error: %v", err)
+	}
+	if len(itemHooks.items) != 1 {
+		t.Fatalf("title-only update called hook %d times, want 1", len(itemHooks.items))
+	}
+
+	feedBody = strings.Replace(feedBody, "https://cdn.example.com/one.png", "https://cdn.example.com/two.png", 1)
+	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("Refresh after image URL change returned error: %v", err)
+	}
+	if len(itemHooks.items) != 2 || itemHooks.items[1].ImageURL != "https://cdn.example.com/two.png" {
+		t.Fatalf("hooks after image URL change = %#v", itemHooks.items)
+	}
+
+	feedBody = strings.Replace(feedBody, "https://example.com/one", "https://example.com/two", 1)
+	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("Refresh after page URL change returned error: %v", err)
+	}
+	if len(itemHooks.items) != 3 || itemHooks.items[2].URL != "https://example.com/two" {
+		t.Fatalf("hooks after page URL change = %#v", itemHooks.items)
+	}
+}
+
+func TestRefreshDoesNotInvokeItemHookWithoutImageInputs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<rss><channel><title>Example</title><item><guid>one</guid><title>First</title></item></channel></rss>`))
+	}))
+	defer server.Close()
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
+	itemHooks := &itemUpsertHookFake{}
+	svc := NewServiceWithItemUpsertHook(store, nil, itemHooks.record, server.Client())
+	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("Refresh returned error: %v", err)
+	}
+	if len(itemHooks.items) != 0 {
+		t.Fatalf("hooks = %#v, want no image crawl", itemHooks.items)
 	}
 }
 
@@ -346,19 +424,35 @@ func TestRefreshRecordsParseError(t *testing.T) {
 	}
 }
 
-func TestSafeDialContextRejectsLocalhost(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+func TestSafeHTTPClientRejectsLocalhost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
 
-	conn, err := safeDialContext(ctx, "tcp", "127.0.0.1:80")
+	client := safehttp.NewClient(time.Second)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext returned error: %v", err)
+	}
+	response, err := client.Do(request)
+	if response != nil {
+		response.Body.Close()
+	}
 	if err == nil {
-		conn.Close()
-		t.Fatal("safeDialContext accepted localhost")
+		t.Fatal("safe HTTP client accepted localhost")
 	}
 }
 
 type refreshJobInserterFake struct {
 	args []RefreshArgs
+}
+
+type itemUpsertHookFake struct {
+	items []core.Item
+}
+
+func (f *itemUpsertHookFake) record(_ context.Context, _ *sql.Tx, item core.Item) error {
+	f.items = append(f.items, item)
+	return nil
 }
 
 func (f *refreshJobInserterFake) InsertRefresh(_ context.Context, args RefreshArgs) error {
@@ -465,6 +559,33 @@ func (s *refreshStore) UpsertItem(ctx context.Context, item core.Item) (core.Ite
 	item.ID = "item-1"
 	s.items = append(s.items, item)
 	return item, true, nil
+}
+
+func (s *refreshStore) UpsertItemWithHook(ctx context.Context, item core.Item, hook core.ItemUpsertHook) (core.Item, bool, error) {
+	for index, existing := range s.items {
+		if existing.GUID != item.GUID {
+			continue
+		}
+		item.ID = existing.ID
+		changed := existing.URL != item.URL || existing.ImageURL != item.ImageURL
+		s.items[index] = item
+		if changed && hook != nil && (item.URL != "" || item.ImageURL != "") {
+			if err := hook(ctx, nil, item); err != nil {
+				return core.Item{}, false, err
+			}
+		}
+		return item, false, nil
+	}
+	item, created, err := s.UpsertItem(ctx, item)
+	if err != nil {
+		return core.Item{}, false, err
+	}
+	if hook != nil && (item.URL != "" || item.ImageURL != "") {
+		if err := hook(ctx, nil, item); err != nil {
+			return core.Item{}, false, err
+		}
+	}
+	return item, created, nil
 }
 
 func (s *refreshStore) AppendEvent(ctx context.Context, event core.Event) (core.Event, error) {

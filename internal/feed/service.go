@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"time"
 	"unicode/utf8"
 
 	"github.com/spool-reader/spool/internal/core"
+	"github.com/spool-reader/spool/internal/safehttp"
 )
 
 const (
@@ -51,14 +51,15 @@ type Store interface {
 	MarkFeedRead(ctx context.Context, userID, feedID string) error
 	MarkAllRead(ctx context.Context, userID string) error
 	UpdateFeed(ctx context.Context, feed core.Feed) (core.Feed, error)
-	UpsertItem(ctx context.Context, item core.Item) (core.Item, bool, error)
+	UpsertItemWithHook(ctx context.Context, item core.Item, hook core.ItemUpsertHook) (core.Item, bool, error)
 	AppendEvent(ctx context.Context, event core.Event) (core.Event, error)
 }
 
 type Service struct {
-	store  Store
-	jobs   RefreshJobInserter
-	client *http.Client
+	store          Store
+	jobs           RefreshJobInserter
+	itemUpsertHook core.ItemUpsertHook
+	client         *http.Client
 }
 
 func NewService(store Store, client *http.Client) *Service {
@@ -66,10 +67,15 @@ func NewService(store Store, client *http.Client) *Service {
 }
 
 func NewServiceWithJobs(store Store, jobs RefreshJobInserter, client *http.Client) *Service {
+	return NewServiceWithItemUpsertHook(store, jobs, nil, client)
+}
+
+// NewServiceWithItemUpsertHook installs a hook for changed item image inputs.
+func NewServiceWithItemUpsertHook(store Store, jobs RefreshJobInserter, itemUpsertHook core.ItemUpsertHook, client *http.Client) *Service {
 	if client == nil {
 		client = safeHTTPClient()
 	}
-	return &Service{store: store, jobs: jobs, client: client}
+	return &Service{store: store, jobs: jobs, itemUpsertHook: itemUpsertHook, client: client}
 }
 
 func (s *Service) ListFeeds(ctx context.Context) ([]core.Feed, error) {
@@ -220,15 +226,28 @@ func (s *Service) refresh(ctx context.Context, feed core.Feed) error {
 		if parsedItem.Title == "" {
 			continue
 		}
-		item, created, err := s.store.UpsertItem(ctx, core.Item{
+		itemBaseURL := feed.SiteURL
+		if itemBaseURL == "" {
+			itemBaseURL = feed.URL
+		}
+		itemURL := truncateItemField(resolveItemMetaURL(itemBaseURL, parsedItem.URL), core.MaxItemURLChars)
+		imageBaseURL := itemURL
+		if imageBaseURL == "" {
+			imageBaseURL = feed.SiteURL
+		}
+		if imageBaseURL == "" {
+			imageBaseURL = feed.URL
+		}
+		item, created, err := s.store.UpsertItemWithHook(ctx, core.Item{
 			FeedID:      feed.ID,
 			GUID:        parsedItem.GUID,
-			URL:         truncateItemField(parsedItem.URL, core.MaxItemURLChars),
+			URL:         itemURL,
+			ImageURL:    truncateItemField(resolveItemMetaURL(imageBaseURL, parsedItem.ImageURL), core.MaxItemURLChars),
 			Title:       truncateItemField(parsedItem.Title, core.MaxItemTitleChars),
 			Summary:     truncateItemField(parsedItem.Summary, core.MaxItemSummaryChars),
 			Author:      truncateItemField(parsedItem.Author, core.MaxItemAuthorChars),
 			PublishedAt: parsedItem.PublishedAt,
-		})
+		}, s.itemUpsertHook)
 		if err != nil {
 			return err
 		}
@@ -239,6 +258,27 @@ func (s *Service) refresh(ctx context.Context, feed core.Feed) error {
 		}
 	}
 	return nil
+}
+
+func resolveItemMetaURL(baseURL, rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if !parsedURL.IsAbs() {
+		base, err := url.Parse(baseURL)
+		if err != nil || !safehttp.ValidURL(base) {
+			return ""
+		}
+		parsedURL = base.ResolveReference(parsedURL)
+	}
+	if !safehttp.ValidURL(parsedURL) {
+		return ""
+	}
+	return parsedURL.String()
 }
 
 func truncateItemField(value string, limit int) string {
@@ -256,42 +296,11 @@ func (s *Service) enqueueRefresh(ctx context.Context, feed core.Feed) error {
 }
 
 func validFeedURL(parsedURL *url.URL) bool {
-	return parsedURL.Host != "" && parsedURL.User == nil &&
-		(parsedURL.Scheme == "http" || parsedURL.Scheme == "https") &&
-		(parsedURL.Port() == "" || parsedURL.Port() == "80" || parsedURL.Port() == "443")
+	return safehttp.ValidURL(parsedURL)
 }
 
 func safeHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout:   defaultRequestTimeout,
-		Transport: &http.Transport{Proxy: nil, DialContext: safeDialContext},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !validFeedURL(req.URL) {
-				return fmt.Errorf("unsafe feed redirect")
-			}
-			return nil
-		},
-	}
-}
-
-func safeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
-	}
-	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-	if err != nil {
-		return nil, fmt.Errorf("resolve feed host: %w", err)
-	}
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("feed host has no addresses")
-	}
-	for _, ip := range addresses {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-			return nil, fmt.Errorf("feed host resolves to a non-public address")
-		}
-	}
-	return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+	return safehttp.NewClient(defaultRequestTimeout)
 }
 
 func fallbackIconURL(siteURL string) string {

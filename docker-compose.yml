@@ -1,3 +1,16 @@
+x-spool-app: &spool-app
+  build: .
+  restart: unless-stopped
+  environment:
+    SPOOL_DATABASE_URL: postgres://spool:spool@postgres:5432/spool?sslmode=disable
+    SPOOL_HOME: /var/lib/spool
+    SPOOL_SETUP_TOKEN: ${SPOOL_SETUP_TOKEN:-}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  volumes:
+    - spool-home-data:/var/lib/spool
+
 services:
   postgres:
     image: postgres:16
@@ -16,5 +29,34 @@ services:
       timeout: 5s
       retries: 5
 
+  spool-migrate:
+    <<: *spool-app
+    command: ["migrate"]
+    restart: "no"
+
+  spool-server:
+    <<: *spool-app
+    command: ["server"]
+    depends_on:
+      spool-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+
+  spool-worker:
+    <<: *spool-app
+    command: ["worker"]
+    depends_on:
+      spool-migrate:
+        condition: service_completed_successfully
+
+  spool-scheduler:
+    <<: *spool-app
+    command: ["scheduler"]
+    depends_on:
+      spool-migrate:
+        condition: service_completed_successfully
+
 volumes:
   spool-postgres-data:
+  spool-home-data:

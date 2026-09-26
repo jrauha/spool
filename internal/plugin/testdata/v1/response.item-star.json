@@ -1,0 +1,8 @@
+{
+  "ops": [
+    {
+      "op": "item.star",
+      "itemId": "item-id"
+    }
+  ]
+}
