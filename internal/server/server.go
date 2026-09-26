@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -53,8 +52,9 @@ type contextKey string
 const userContextKey contextKey = "user"
 
 const (
-	itemsPerPage = 20
-	firstPage    = 1
+	itemsPerPage  = 20
+	queryModeText = "text"
+	queryModeRSQL = "rsql"
 )
 
 type App struct {
@@ -76,13 +76,13 @@ type pageData struct {
 	FeedNames    map[string]string
 	FeedIcons    map[string]string
 	Items        []core.Item
-	Page         int
-	PreviousPage int
-	NextPage     int
-	HasNextPage  bool
 	ReturnTo     string
 	ResetEnabled bool
 	ResetToken   string
+	ItemQuery    string
+	QueryMode    string
+	PreviousURL  string
+	NextURL      string
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
@@ -122,6 +122,7 @@ func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cook
 	mux.HandleFunc("POST /reset", app.resetPassword)
 	mux.HandleFunc("POST /logout", app.logout)
 	mux.Handle("GET /", app.requireAuth(http.HandlerFunc(app.home)))
+	mux.Handle("GET /search", app.requireAuth(http.HandlerFunc(app.search)))
 	mux.Handle("GET /feeds", app.requireAuth(http.HandlerFunc(app.feedList)))
 	mux.Handle("GET /feeds/{id}", app.requireAuth(http.HandlerFunc(app.feedDetail)))
 	mux.Handle("POST /feeds", app.requireAuth(http.HandlerFunc(app.addFeed)))
@@ -156,12 +157,39 @@ func script(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(appJS)
 }
 
-func pageNumber(r *http.Request) int {
-	page, err := strconv.Atoi(r.URL.Query().Get("page"))
-	if err != nil || page < firstPage {
-		return firstPage
+func readingPageURL(cursor string) string {
+	if cursor == "" {
+		return "/"
 	}
-	return page
+	return "/?" + url.Values{"cursor": {cursor}}.Encode()
+}
+
+func searchPageURL(mode, query, cursor string) string {
+	values := url.Values{"mode": {mode}, "q": {query}}
+	if cursor != "" {
+		values.Set("cursor", cursor)
+	}
+	return "/search?" + values.Encode()
+}
+
+func feedPageURL(feedID, cursor string) string {
+	path := "/feeds/" + url.PathEscape(feedID)
+	if cursor == "" {
+		return path
+	}
+	return path + "?" + url.Values{"cursor": {cursor}}.Encode()
+}
+
+func itemQueryParams(r *http.Request) (string, string, bool) {
+	mode := r.URL.Query().Get("mode")
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if legacy := strings.TrimSpace(r.URL.Query().Get("filter")); legacy != "" && query == "" {
+		return queryModeRSQL, legacy, true
+	}
+	if mode == "" {
+		mode = queryModeText
+	}
+	return mode, query, mode == queryModeText || mode == queryModeRSQL
 }
 
 func pageNotice(r *http.Request) string {
@@ -200,6 +228,14 @@ func localRedirectPath(value string) string {
 		return value
 	}
 	return ""
+}
+
+func itemMatches(matches []core.ItemMatch) []core.Item {
+	items := make([]core.Item, len(matches))
+	for index, match := range matches {
+		items[index] = match.Item
+	}
+	return items
 }
 
 func feedNames(feeds []core.Feed) map[string]string {
@@ -270,8 +306,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Spool\n"))
 		return
 	}
-	page := pageNumber(r)
-	data := pageData{Email: user.Email, Notice: pageNotice(r), Page: page}
+	data := pageData{Email: user.Email, Notice: pageNotice(r)}
 	if a.feeds != nil {
 		var err error
 		data.Feeds, err = a.feeds.ListFeedsForUser(r.Context(), user.ID)
@@ -280,23 +315,75 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data.Feeds = withDisplayIcons(data.Feeds)
-		data.Items, err = a.feeds.LatestForUser(r.Context(), user.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
+		result, err := a.feeds.QueryItemsForUser(r.Context(), user.ID, feed.ItemQuery{
+			Limit:  itemsPerPage,
+			Cursor: r.URL.Query().Get("cursor"),
+		})
+		if errors.Is(err, feed.ErrInvalidQuery) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err != nil {
 			http.Error(w, "items unavailable", http.StatusInternalServerError)
 			return
 		}
-		if len(data.Items) > itemsPerPage {
-			data.Items = data.Items[:itemsPerPage]
-			data.HasNextPage = true
-			data.NextPage = page + 1
+		data.Items = itemMatches(result.Items)
+		if result.PreviousCursor != "" {
+			data.PreviousURL = readingPageURL(result.PreviousCursor)
 		}
-		if page > firstPage {
-			data.PreviousPage = page - 1
+		if result.NextCursor != "" {
+			data.NextURL = readingPageURL(result.NextCursor)
 		}
 	}
 	data.FeedNames = feedNames(data.Feeds)
 	data.FeedIcons = feedIcons(data.Feeds)
 	a.renderPage(w, r, "home.html", data)
+}
+
+func (a *App) search(w http.ResponseWriter, r *http.Request) {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	mode, query, validQueryMode := itemQueryParams(r)
+	if !validQueryMode {
+		http.Error(w, "invalid query mode", http.StatusBadRequest)
+		return
+	}
+	data := pageData{Email: user.Email, ItemQuery: query, QueryMode: mode}
+	if a.feeds != nil {
+		var err error
+		data.Feeds, err = a.feeds.ListFeedsForUser(r.Context(), user.ID)
+		if err != nil {
+			http.Error(w, "feeds unavailable", http.StatusInternalServerError)
+			return
+		}
+		data.Feeds = withDisplayIcons(data.Feeds)
+		if query != "" {
+			itemQuery := feed.ItemQuery{Limit: itemsPerPage, Cursor: r.URL.Query().Get("cursor")}
+			if mode == queryModeRSQL {
+				itemQuery.Filter = query
+			} else {
+				itemQuery.Text = query
+			}
+			result, err := a.feeds.QueryItemsForUser(r.Context(), user.ID, itemQuery)
+			if errors.Is(err, feed.ErrInvalidQuery) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err != nil {
+				http.Error(w, "items unavailable", http.StatusInternalServerError)
+				return
+			}
+			data.Items = itemMatches(result.Items)
+			if result.PreviousCursor != "" {
+				data.PreviousURL = searchPageURL(mode, query, result.PreviousCursor)
+			}
+			if result.NextCursor != "" {
+				data.NextURL = searchPageURL(mode, query, result.NextCursor)
+			}
+		}
+	}
+	data.FeedNames = feedNames(data.Feeds)
+	data.FeedIcons = feedIcons(data.Feeds)
+	a.renderPage(w, r, "search.html", data)
 }
 
 func (a *App) feedList(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +407,7 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := r.Context().Value(userContextKey).(auth.User)
-	feed, err := a.feeds.FindForUser(r.Context(), user.ID, r.PathValue("id"))
+	selectedFeed, err := a.feeds.FindForUser(r.Context(), user.ID, r.PathValue("id"))
 	if errors.Is(err, core.ErrFeedNotFound) {
 		http.NotFound(w, r)
 		return
@@ -329,26 +416,37 @@ func (a *App) feedDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed unavailable", http.StatusInternalServerError)
 		return
 	}
-	page := pageNumber(r)
-	feed.IconURL = displayIconURL(feed)
+	selectedFeed.IconURL = displayIconURL(selectedFeed)
 	feeds, err := a.feeds.ListFeedsForUser(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, "feeds unavailable", http.StatusInternalServerError)
 		return
 	}
-	items, err := a.feeds.ItemsForUser(r.Context(), user.ID, feed.ID, itemsPerPage+1, (page-firstPage)*itemsPerPage)
+	result, err := a.feeds.QueryItemsForUser(r.Context(), user.ID, feed.ItemQuery{
+		Filter: "feed.id==" + selectedFeed.ID,
+		Limit:  itemsPerPage,
+		Cursor: r.URL.Query().Get("cursor"),
+	})
+	if errors.Is(err, feed.ErrInvalidQuery) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(w, "items unavailable", http.StatusInternalServerError)
 		return
 	}
-	data := pageData{Email: user.Email, Notice: pageNotice(r), Feed: &feed, Feeds: withDisplayIcons(feeds), Items: items, Page: page}
-	if len(data.Items) > itemsPerPage {
-		data.Items = data.Items[:itemsPerPage]
-		data.HasNextPage = true
-		data.NextPage = page + 1
+	data := pageData{
+		Email:  user.Email,
+		Notice: pageNotice(r),
+		Feed:   &selectedFeed,
+		Feeds:  withDisplayIcons(feeds),
+		Items:  itemMatches(result.Items),
 	}
-	if page > firstPage {
-		data.PreviousPage = page - 1
+	if result.PreviousCursor != "" {
+		data.PreviousURL = feedPageURL(selectedFeed.ID, result.PreviousCursor)
+	}
+	if result.NextCursor != "" {
+		data.NextURL = feedPageURL(selectedFeed.ID, result.NextCursor)
 	}
 	a.renderPage(w, r, "feed.html", data)
 }

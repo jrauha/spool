@@ -47,3 +47,20 @@ Password reset email is enabled when `SPOOL_SMTP_ADDR` is set. Configure
 `SPOOL_PUBLIC_URL` (an HTTPS URL), `SPOOL_SMTP_FROM`, and optionally
 `SPOOL_SMTP_USERNAME` and `SPOOL_SMTP_PASSWORD`. The SMTP server must support
 STARTTLS.
+
+## Item queries
+
+The search page supports plain-text and RSQL modes. Text mode searches item
+titles, authors, summaries, and URLs. RSQL mode supports filters such as:
+
+```text
+text=search='postgres replication';read==false
+feed.id=in=(2f079ce2-b5ad-4c8d-9e90-93e735ba1378,58b82b8b-b740-43d5-9711-aaa582217b6a)
+date>=2025-01-01T00:00:00Z;(author==Alice,title==*Postgres*)
+```
+
+Use `;` for AND, `,` for OR, and parentheses for grouping. Supported selectors
+are `id`, `feed.id`, `feed.title`, `title`, `author`, `url`, `publishedAt`,
+`createdAt`, `date`, `read`, and `text`. Comparison operators are `==`, `!=`,
+`>`, `>=`, `<`, `<=`, `=in=`, and `=out=`. The `text` selector uses the
+`=search=` operator and PostgreSQL web-search syntax.

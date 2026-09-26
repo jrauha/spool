@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Reading · Spool</title>
+  <title>Search · Spool</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/app.js" defer></script>
 </head>
@@ -11,7 +11,7 @@
 <div id="spool-app" class="app-shell" data-ui-region="app">
   <header id="spool-header" class="site-header" data-ui-region="header">
     <a class="brand" href="/">Spool</a>
-    <nav aria-label="Main navigation"><a aria-current="page" href="/">Reading</a><a href="/search">Search</a><a href="/feeds">Feeds</a></nav>
+    <nav aria-label="Main navigation"><a href="/">Reading</a><a aria-current="page" href="/search">Search</a><a href="/feeds">Feeds</a></nav>
     <div class="account">{{.Email}} <form class="inline" method="post" action="/logout"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><button class="link-button">Log out</button></form></div>
   </header>
   <div class="app-layout">
@@ -19,10 +19,13 @@
     <h2>Feeds</h2>
     <nav>{{range .Feeds}}<a href="/feeds/{{.ID}}">{{if .IconURL}}<img class="feed-icon" src="{{.IconURL}}" alt="">{{end}}{{.Title}}{{if .UnreadCount}} <span class="unread-count">{{.UnreadCount}}</span>{{end}}</a>{{else}}<span>No feeds yet.</span>{{end}}</nav>
   </aside>
-  <main id="spool-main" class="reading-column" data-ui-region="reading-list">
-    <header class="page-heading feed-heading" data-ui-region="page-header"><div><h1>Latest</h1><p>New items from your feeds.</p></div><form method="post" action="/items/read"><input name="csrf_token" type="hidden" value="{{.CSRFToken}}"><input name="return_to" type="hidden" value="{{.ReturnTo}}"><button>Mark all read</button></form></header>
-    <div class="plugin-slot plugin-slot--page" data-plugin-slot="page.after-header"></div>
-    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+  <main id="spool-main" class="reading-column" data-ui-region="search-results">
+    <header class="page-heading" data-ui-region="page-header"><h1>Search</h1><p>Find items across your feeds.</p></header>
+    <form class="item-query" method="get" action="/search">
+      <label for="item-query">Search items</label>
+      <div><select name="mode" aria-label="Search mode"><option value="text"{{if eq .QueryMode "text"}} selected{{end}}>Text</option><option value="rsql"{{if eq .QueryMode "rsql"}} selected{{end}}>RSQL</option></select><input id="item-query" name="q" value="{{.ItemQuery}}" placeholder="Search items"><button>Search</button>{{if .ItemQuery}}<a href="/search">Clear</a>{{end}}</div>
+    </form>
+    {{if .ItemQuery}}
     <ul class="item-list">
     {{range .Items}}
       <li id="item-{{.ID}}" class="item-row{{if .ReadAt}} item-row--read{{end}}" data-entity="item" data-item-id="{{.ID}}" data-feed-id="{{.FeedID}}">
@@ -33,9 +36,12 @@
         <div class="plugin-slot plugin-slot--item-actions" data-plugin-slot="item.actions"></div>
       </li>
     {{else}}
-      <li class="empty-state">No items yet. Add a feed, then allow it a moment to refresh.</li>
+      <li class="empty-state">No items match this query.</li>
     {{end}}
     </ul>
+    {{else}}
+    <p class="empty-state">Enter a query to search your items.</p>
+    {{end}}
     {{if or .PreviousURL .NextURL}}
     <nav class="pagination" aria-label="Pagination">
       {{if .PreviousURL}}<a href="{{.PreviousURL}}">Previous</a>{{else}}<span>Previous</span>{{end}}

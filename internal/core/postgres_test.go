@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dbkit "github.com/spool-reader/spool/internal/db"
+	itemquery "github.com/spool-reader/spool/internal/query"
 )
 
 const testDBEnv = "SPOOL_TEST_DATABASE_URL"
@@ -99,40 +100,12 @@ func TestPostgresStoreItems(t *testing.T) {
 		t.Fatalf("summary = %q, want updated summary", item.Summary)
 	}
 
-	items, err := store.ListItems(ctx, feed.ID, 10, 0)
+	found, err := store.FindItem(ctx, item.ID)
 	if err != nil {
-		t.Fatalf("ListItems returned error: %v", err)
+		t.Fatalf("FindItem returned error: %v", err)
 	}
-	if len(items) != 1 || items[0].ID != item.ID {
-		t.Fatalf("items = %#v, want updated item", items)
-	}
-
-	latest, err := store.ListLatestItems(ctx, 1, 0)
-	if err != nil {
-		t.Fatalf("ListLatestItems returned error: %v", err)
-	}
-	if len(latest) != 1 || latest[0].ID != item.ID {
-		t.Fatalf("latest = %#v, want updated item", latest)
-	}
-
-	newerPublishedAt := publishedAt.Add(time.Hour)
-	_, _, err = store.UpsertItem(ctx, Item{
-		FeedID:      feed.ID,
-		GUID:        "item-2",
-		URL:         "https://example.com/items/2",
-		Title:       "Second item",
-		PublishedAt: &newerPublishedAt,
-	})
-	if err != nil {
-		t.Fatalf("UpsertItem newer returned error: %v", err)
-	}
-
-	latest, err = store.ListLatestItems(ctx, 1, 1)
-	if err != nil {
-		t.Fatalf("ListLatestItems page returned error: %v", err)
-	}
-	if len(latest) != 1 || latest[0].ID != item.ID {
-		t.Fatalf("latest page = %#v, want first item", latest)
+	if found.ID != item.ID || found.Summary != item.Summary {
+		t.Fatalf("found item = %#v, want %#v", found, item)
 	}
 }
 
@@ -168,9 +141,9 @@ func TestPostgresStoreSubscriptionReadState(t *testing.T) {
 	if len(feeds) != 1 || feeds[0].UnreadCount != 0 {
 		t.Fatalf("feeds = %#v, want no unread items", feeds)
 	}
-	items, err := store.ListLatestItemsForUser(ctx, userID, 10, 0)
+	items, err := store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListLatestItemsForUser returned error: %v", err)
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
 	}
 	if len(items) != 1 || items[0].ReadAt == nil {
 		t.Fatalf("items = %#v, want read state", items)
@@ -179,9 +152,9 @@ func TestPostgresStoreSubscriptionReadState(t *testing.T) {
 	if err := store.MarkItemUnread(ctx, userID, item.ID); err != nil {
 		t.Fatalf("MarkItemUnread returned error: %v", err)
 	}
-	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	items, err = store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListItemsForUser returned error: %v", err)
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
 	}
 	if len(items) != 1 || items[0].ReadAt != nil {
 		t.Fatalf("items = %#v, want unread state", items)
@@ -190,9 +163,9 @@ func TestPostgresStoreSubscriptionReadState(t *testing.T) {
 	if err := store.MarkFeedRead(ctx, userID, feed.ID); err != nil {
 		t.Fatalf("MarkFeedRead returned error: %v", err)
 	}
-	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	items, err = store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListItemsForUser after feed read returned error: %v", err)
+		t.Fatalf("QueryItemsForUser after feed read returned error: %v", err)
 	}
 	if len(items) != 1 || items[0].ReadAt == nil {
 		t.Fatalf("items = %#v, want read before state", items)
@@ -204,12 +177,119 @@ func TestPostgresStoreSubscriptionReadState(t *testing.T) {
 	if err := store.MarkAllRead(ctx, userID); err != nil {
 		t.Fatalf("MarkAllRead returned error: %v", err)
 	}
-	items, err = store.ListItemsForUser(ctx, userID, feed.ID, 10, 0)
+	items, err = store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListItemsForUser after all read returned error: %v", err)
+		t.Fatalf("QueryItemsForUser after all read returned error: %v", err)
 	}
 	if len(items) != 1 || items[0].ReadAt == nil {
 		t.Fatalf("items = %#v, want all read state", items)
+	}
+}
+
+func TestPostgresStoreQueryItemsForUser(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+	otherFeed, err := store.CreateFeed(ctx, Feed{URL: "https://other.example/feed.xml", Title: "Other"})
+	if err != nil {
+		t.Fatalf("CreateFeed returned error: %v", err)
+	}
+	userID := testUserID(t, database, ctx)
+	if err := store.CreateSubscription(ctx, userID, feed.ID); err != nil {
+		t.Fatalf("CreateSubscription returned error: %v", err)
+	}
+
+	publishedAt := time.Date(2025, time.January, 2, 12, 0, 0, 0, time.UTC)
+	postgresItem, _, err := store.UpsertItem(ctx, Item{
+		FeedID: feed.ID, GUID: "postgres", Title: "Postgres replication guide",
+		Summary: "Configure logical replication slots.", PublishedAt: &publishedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertItem returned error: %v", err)
+	}
+	olderAt := publishedAt.Add(-time.Hour)
+	if _, _, err := store.UpsertItem(ctx, Item{FeedID: feed.ID, GUID: "go", Title: "Go release", PublishedAt: &olderAt}); err != nil {
+		t.Fatalf("UpsertItem returned error: %v", err)
+	}
+	if _, _, err := store.UpsertItem(ctx, Item{FeedID: otherFeed.ID, GUID: "private", Title: "Postgres private", PublishedAt: &publishedAt}); err != nil {
+		t.Fatalf("UpsertItem returned error: %v", err)
+	}
+
+	filter, err := itemquery.Parse(`text=search='postgres replication';read==false`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := store.QueryItemsForUser(ctx, userID, ItemQuery{Filter: filter, Sort: ItemQuerySortRelevance, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].ID != postgresItem.ID || matches[0].FeedTitle != feed.Title || matches[0].Rank <= 0 {
+		t.Fatalf("matches = %#v", matches)
+	}
+
+	if err := store.MarkItemRead(ctx, userID, postgresItem.ID); err != nil {
+		t.Fatalf("MarkItemRead returned error: %v", err)
+	}
+	filter, err = itemquery.Parse(`read==true`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err = store.QueryItemsForUser(ctx, userID, ItemQuery{Filter: filter, Sort: ItemQuerySortNewest, Limit: 10})
+	if err != nil {
+		t.Fatalf("read QueryItemsForUser returned error: %v", err)
+	}
+	if len(matches) != 1 || matches[0].ID != postgresItem.ID || matches[0].ReadAt == nil {
+		t.Fatalf("read matches = %#v", matches)
+	}
+
+	firstPage, err := store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 1})
+	if err != nil {
+		t.Fatalf("first page QueryItemsForUser returned error: %v", err)
+	}
+	if len(firstPage) != 1 {
+		t.Fatalf("first page = %#v", firstPage)
+	}
+	secondPage, err := store.QueryItemsForUser(ctx, userID, ItemQuery{
+		Sort:  ItemQuerySortNewest,
+		Limit: 1,
+		Cursor: &ItemQueryCursor{
+			SortAt: firstPage[0].SortAt,
+			ItemID: firstPage[0].ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("second page QueryItemsForUser returned error: %v", err)
+	}
+	if len(secondPage) != 1 || secondPage[0].ID == firstPage[0].ID {
+		t.Fatalf("second page = %#v", secondPage)
+	}
+	previousPage, err := store.QueryItemsForUser(ctx, userID, ItemQuery{
+		Sort:  ItemQuerySortNewest,
+		Limit: 1,
+		Cursor: &ItemQueryCursor{
+			SortAt: secondPage[0].SortAt,
+			ItemID: secondPage[0].ID,
+			Before: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("previous page QueryItemsForUser returned error: %v", err)
+	}
+	if len(previousPage) != 1 || previousPage[0].ID != firstPage[0].ID {
+		t.Fatalf("previous page = %#v, want %#v", previousPage, firstPage)
+	}
+
+	filter, err = itemquery.Parse(`feed.id==` + otherFeed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err = store.QueryItemsForUser(ctx, userID, ItemQuery{Filter: filter, Sort: ItemQuerySortNewest, Limit: 10})
+	if err != nil {
+		t.Fatalf("scoped QueryItemsForUser returned error: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("unsubscribed matches = %#v", matches)
 	}
 }
 

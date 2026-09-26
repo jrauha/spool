@@ -3,6 +3,7 @@ module github.com/spool-reader/spool
 go 1.22
 
 require (
+	github.com/alecthomas/participle/v2 v2.1.4
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/joho/godotenv v1.5.1
 	github.com/microcosm-cc/bluemonday v1.0.27
