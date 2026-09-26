@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spool-reader/spool/internal/core"
 )
@@ -259,6 +261,43 @@ func TestRefreshUpdatesFeedAndCreatesItems(t *testing.T) {
 	}
 	if len(store.events) != 2 {
 		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestRefreshTruncatesOversizedItemFields(t *testing.T) {
+	longTitle := strings.Repeat("界", core.MaxItemTitleChars+1)
+	longAuthor := strings.Repeat("a", core.MaxItemAuthorChars+1)
+	longSummary := strings.Repeat("s", core.MaxItemSummaryChars+1)
+	longURL := "https://example.com/" + strings.Repeat("u", core.MaxItemURLChars)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss><channel><title>Example</title><item><guid>one</guid><title>` + longTitle +
+			`</title><link>` + longURL + `</link><description>` + longSummary + `</description><author>` + longAuthor +
+			`</author></item></channel></rss>`))
+	}))
+	defer server.Close()
+
+	store := &refreshStore{feed: core.Feed{ID: "feed-1", URL: server.URL}}
+	svc := NewService(store, server.Client())
+
+	if err := svc.Refresh(context.Background(), store.feed.ID); err != nil {
+		t.Fatalf("Refresh returned error: %v", err)
+	}
+	if len(store.items) != 1 {
+		t.Fatalf("items = %#v", store.items)
+	}
+	item := store.items[0]
+	for name, test := range map[string]struct {
+		value string
+		limit int
+	}{
+		"title":   {value: item.Title, limit: core.MaxItemTitleChars},
+		"author":  {value: item.Author, limit: core.MaxItemAuthorChars},
+		"summary": {value: item.Summary, limit: core.MaxItemSummaryChars},
+		"URL":     {value: item.URL, limit: core.MaxItemURLChars},
+	} {
+		if length := utf8.RuneCountInString(test.value); length != test.limit {
+			t.Errorf("%s length = %d, want %d", name, length, test.limit)
+		}
 	}
 }
 

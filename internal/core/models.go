@@ -31,6 +31,13 @@ type Subscription struct {
 	UpdatedAt  time.Time
 }
 
+const (
+	MaxItemTitleChars   = 1000
+	MaxItemAuthorChars  = 500
+	MaxItemSummaryChars = 100000
+	MaxItemURLChars     = 4096
+)
+
 type Item struct {
 	ID          string
 	FeedID      string
