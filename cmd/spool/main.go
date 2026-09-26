@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/riverqueue/river"
+	"github.com/spool-reader/spool/internal/asset"
 	"github.com/spool-reader/spool/internal/auth"
 	"github.com/spool-reader/spool/internal/config"
 	"github.com/spool-reader/spool/internal/core"
@@ -21,14 +23,17 @@ import (
 	"github.com/spool-reader/spool/internal/feed"
 	"github.com/spool-reader/spool/internal/mailer"
 	"github.com/spool-reader/spool/internal/server"
+	"github.com/spool-reader/spool/internal/thumbnail"
 )
 
 const (
-	serverCommand    = "server"
-	workerCommand    = "worker"
-	schedulerCommand = "scheduler"
-	migrateCommand   = "migrate"
-	usageMessage     = "usage: spool [server|worker|scheduler|migrate]"
+	defaultThumbnailWorkers = 2
+	assetDirectoryName      = "assets"
+	serverCommand           = "server"
+	workerCommand           = "worker"
+	schedulerCommand        = "scheduler"
+	migrateCommand          = "migrate"
+	usageMessage            = "usage: spool [server|worker|scheduler|migrate]"
 )
 
 func main() {
@@ -68,7 +73,7 @@ func main() {
 	case serverCommand:
 		runErr = runServer(ctx, cfg, log, database)
 	case workerCommand:
-		runErr = runWorker(ctx, log, database)
+		runErr = runWorker(ctx, cfg, log, database)
 	case schedulerCommand:
 		runErr = runScheduler(ctx, log, database)
 	}
@@ -113,8 +118,10 @@ func runServer(ctx context.Context, cfg config.Config, log *slog.Logger, databas
 	if err != nil {
 		return err
 	}
-	feedSvc := feed.NewServiceWithJobs(coreStore, &riverFeedJobs{client: riverClient}, nil)
-	srv := server.New(cfg, log, authSvc, feedSvc, database.PingContext, nil)
+	assetSvc := asset.NewService(coreStore, filepath.Join(cfg.SpoolHome, assetDirectoryName))
+	thumbnailJobs := &riverThumbnailJobs{client: riverClient}
+	feedSvc := feed.NewServiceWithItemUpsertHook(coreStore, &riverFeedJobs{client: riverClient}, thumbnailItemUpsertHook(thumbnailJobs), nil)
+	srv := server.NewWithAssets(cfg, log, authSvc, feedSvc, assetSvc, database.PingContext, nil)
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Info("starting spool server", "addr", cfg.Addr)
@@ -134,9 +141,12 @@ func runServer(ctx context.Context, cfg config.Config, log *slog.Logger, databas
 	return srv.Shutdown(shutdownCtx)
 }
 
-func runWorker(ctx context.Context, log *slog.Logger, database *sql.DB) error {
-	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
+func runWorker(ctx context.Context, cfg config.Config, log *slog.Logger, database *sql.DB) error {
+	store := core.NewPostgresStore(database)
+	assetSvc := asset.NewService(store, filepath.Join(cfg.SpoolHome, assetDirectoryName))
+	client, err := newRiverWorkerClient(database, store, assetSvc, log, map[string]river.QueueConfig{
 		river.QueueDefault: {MaxWorkers: defaultFeedWorkers},
+		thumbnail.JobQueue: {MaxWorkers: defaultThumbnailWorkers},
 	})
 	if err != nil {
 		return err
@@ -146,9 +156,7 @@ func runWorker(ctx context.Context, log *slog.Logger, database *sql.DB) error {
 }
 
 func runScheduler(ctx context.Context, log *slog.Logger, database *sql.DB) error {
-	client, err := newRiverWorkerClient(database, core.NewPostgresStore(database), log, map[string]river.QueueConfig{
-		feed.RefreshScheduleQueue: {MaxWorkers: 1},
-	})
+	client, err := newRiverSchedulerClient(database, core.NewPostgresStore(database), log)
 	if err != nil {
 		return err
 	}

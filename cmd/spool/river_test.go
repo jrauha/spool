@@ -9,7 +9,53 @@ import (
 
 	"github.com/spool-reader/spool/internal/db"
 	"github.com/spool-reader/spool/internal/feed"
+	"github.com/spool-reader/spool/internal/thumbnail"
 )
+
+func TestRiverThumbnailInsertUsesCallerTransaction(t *testing.T) {
+	url := os.Getenv("SPOOL_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("SPOOL_TEST_DATABASE_URL not set")
+	}
+	database, err := db.Open(url)
+	if err != nil {
+		t.Fatalf("Open database: %v", err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	if err := db.Migrate(ctx, database); err != nil {
+		t.Fatalf("Migrate database: %v", err)
+	}
+	client, err := newRiverInsertClient(database, nil)
+	if err != nil {
+		t.Fatalf("create River client: %v", err)
+	}
+	itemID := fmt.Sprintf("integration-%d", time.Now().UnixNano())
+	transaction, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	jobs := &riverThumbnailJobs{client: client}
+	if err := jobs.InsertThumbnailTx(ctx, transaction, thumbnail.JobArgs{
+		ItemID:  itemID,
+		PageURL: "https://example.com/item",
+	}); err != nil {
+		transaction.Rollback()
+		t.Fatalf("insert thumbnail job: %v", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatalf("rollback transaction: %v", err)
+	}
+	var count int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM river_job WHERE kind = 'item.thumbnail' AND args->>'item_id' = $1
+	`, itemID).Scan(&count); err != nil {
+		t.Fatalf("count thumbnail jobs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled-back transaction left %d thumbnail jobs, want 0", count)
+	}
+}
 
 func TestRiverFeedJobBatchFallsBackOnUniqueConflict(t *testing.T) {
 	url := os.Getenv("SPOOL_TEST_DATABASE_URL")

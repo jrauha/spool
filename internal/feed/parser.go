@@ -19,6 +19,7 @@ type ParsedFeed struct {
 type ParsedItem struct {
 	GUID        string
 	URL         string
+	ImageURL    string
 	Title       string
 	Summary     string
 	Author      string
@@ -71,12 +72,25 @@ type rssImage struct {
 }
 
 type rssItem struct {
-	GUID        string `xml:"guid"`
-	Link        string `xml:"link"`
-	Title       string `xml:"title"`
-	Description string `xml:"description"`
-	Author      string `xml:"author"`
-	PublishedAt string `xml:"pubDate"`
+	GUID            string              `xml:"guid"`
+	Link            string              `xml:"link"`
+	Title           string              `xml:"title"`
+	Description     string              `xml:"description"`
+	Author          string              `xml:"author"`
+	Enclosures      []rssEnclosure      `xml:"enclosure"`
+	MediaContents   []rssEnclosure      `xml:"http://search.yahoo.com/mrss/ content"`
+	MediaThumbnails []rssMediaThumbnail `xml:"http://search.yahoo.com/mrss/ thumbnail"`
+	PublishedAt     string              `xml:"pubDate"`
+}
+
+type rssEnclosure struct {
+	URL    string `xml:"url,attr"`
+	Type   string `xml:"type,attr"`
+	Medium string `xml:"medium,attr"`
+}
+
+type rssMediaThumbnail struct {
+	URL string `xml:"url,attr"`
 }
 
 func parseRSS(data []byte) (ParsedFeed, error) {
@@ -96,6 +110,7 @@ func parseRSS(data []byte) (ParsedFeed, error) {
 		feed.Items = append(feed.Items, ParsedItem{
 			GUID:        clean(entry.GUID),
 			URL:         clean(entry.Link),
+			ImageURL:    rssImageURL(entry.Enclosures, entry.MediaContents, entry.MediaThumbnails),
 			Title:       clean(entry.Title),
 			Summary:     clean(entry.Description),
 			Author:      clean(entry.Author),
@@ -116,6 +131,7 @@ type atomDocument struct {
 type atomLink struct {
 	Href string `xml:"href,attr"`
 	Rel  string `xml:"rel,attr"`
+	Type string `xml:"type,attr"`
 }
 
 type atomEntry struct {
@@ -158,6 +174,7 @@ func parseAtom(data []byte) (ParsedFeed, error) {
 		feed.Items = append(feed.Items, ParsedItem{
 			GUID:        clean(entry.ID),
 			URL:         atomURL(entry.Links),
+			ImageURL:    atomImageURL(entry.Links),
 			Title:       clean(entry.Title),
 			Summary:     summary,
 			Author:      clean(entry.Author.Name),
@@ -175,6 +192,42 @@ func rssURL(links []rssLink) string {
 	}
 	for _, link := range links {
 		if link.Rel == "" || link.Rel == "alternate" {
+			return clean(link.Href)
+		}
+	}
+	return ""
+}
+
+func rssImageURL(enclosures, mediaContents []rssEnclosure, mediaThumbnails []rssMediaThumbnail) string {
+	if imageURL := rssEnclosureImageURL(enclosures); imageURL != "" {
+		return imageURL
+	}
+	if imageURL := rssEnclosureImageURL(mediaContents); imageURL != "" {
+		return imageURL
+	}
+	for _, thumbnail := range mediaThumbnails {
+		if imageURL := clean(thumbnail.URL); imageURL != "" {
+			return imageURL
+		}
+	}
+	return ""
+}
+
+func rssEnclosureImageURL(enclosures []rssEnclosure) string {
+	for _, enclosure := range enclosures {
+		mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(enclosure.Type, ";", 2)[0]))
+		isImage := strings.HasPrefix(mediaType, "image/") || strings.EqualFold(enclosure.Medium, "image")
+		if isImage && clean(enclosure.URL) != "" {
+			return clean(enclosure.URL)
+		}
+	}
+	return ""
+}
+
+func atomImageURL(links []atomLink) string {
+	for _, link := range links {
+		mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(link.Type, ";", 2)[0]))
+		if strings.EqualFold(link.Rel, "enclosure") && strings.HasPrefix(mediaType, "image/") && clean(link.Href) != "" {
 			return clean(link.Href)
 		}
 	}

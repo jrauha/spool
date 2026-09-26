@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ var richTextPolicy = bluemonday.UGCPolicy()
 
 var templates = template.Must(template.New("").Funcs(template.FuncMap{
 	"formatDate": formatDate,
+	"itemAsset":  itemAsset,
 	"richText":   richText,
 }).ParseFS(templateFiles, "templates/*.html"))
 
@@ -65,6 +67,11 @@ type App struct {
 	ready        func(context.Context) error
 	metrics      func() string
 	setupToken   string
+	assets       assetProvider
+}
+
+type assetProvider interface {
+	OpenImageForUser(context.Context, string, string) (*os.File, string, error)
 }
 
 type pageData struct {
@@ -86,9 +93,15 @@ type pageData struct {
 }
 
 func New(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, ready func(context.Context) error, metrics func() string) *http.Server {
+	return NewWithAssets(cfg, log, authSvc, feedSvc, nil, ready, metrics)
+}
+
+func NewWithAssets(cfg config.Config, log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, assets interface {
+	OpenImageForUser(context.Context, string, string) (*os.File, string, error)
+}, ready func(context.Context) error, metrics func() string) *http.Server {
 	return &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           newMux(log, authSvc, feedSvc, cfg.CookieSecure, ready, metrics, cfg.SetupToken),
+		Handler:           newMuxWithAssets(log, authSvc, feedSvc, cfg.CookieSecure, ready, metrics, cfg.SetupToken, assets),
 		ReadTimeout:       serverReadTimeout,
 		ReadHeaderTimeout: serverHeaderTimeout,
 		WriteTimeout:      serverWriteTimeout,
@@ -101,17 +114,24 @@ func NewMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service) http
 }
 
 func newMux(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error, metrics func() string, setupToken string) http.Handler {
+	return newMuxWithAssets(log, authSvc, feedSvc, cookieSecure, ready, metrics, setupToken, nil)
+}
+
+func newMuxWithAssets(log *slog.Logger, authSvc *auth.Service, feedSvc *feed.Service, cookieSecure bool, ready func(context.Context) error, metrics func() string, setupToken string, assets assetProvider) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	app := &App{log: log, auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics, setupToken: setupToken}
+	app := &App{log: log, auth: authSvc, feeds: feedSvc, cookieSecure: cookieSecure, ready: ready, metrics: metrics, setupToken: setupToken, assets: assets}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", app.readyz)
 	mux.HandleFunc("GET /metrics", app.metricsHandler)
 	mux.HandleFunc("GET /assets/app.css", stylesheet)
 	mux.HandleFunc("GET /assets/app.js", script)
+	if assets != nil {
+		mux.Handle("GET /assets/{id}", app.requireAuth(http.HandlerFunc(app.asset)))
+	}
 	mux.HandleFunc("GET /setup", app.setupForm)
 	mux.HandleFunc("POST /setup", app.setup)
 	mux.HandleFunc("GET /login", app.loginForm)
@@ -155,6 +175,29 @@ func stylesheet(w http.ResponseWriter, r *http.Request) {
 func script(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	_, _ = w.Write(appJS)
+}
+
+func (a *App) asset(w http.ResponseWriter, r *http.Request) {
+	user, _ := r.Context().Value(userContextKey).(auth.User)
+	file, mimeType, err := a.assets.OpenImageForUser(r.Context(), user.ID, r.PathValue("id"))
+	if errors.Is(err, core.ErrAssetNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	http.ServeContent(w, r, "asset", info.ModTime(), file)
 }
 
 func readingPageURL(cursor string) string {
@@ -236,6 +279,15 @@ func itemMatches(matches []core.ItemMatch) []core.Item {
 		items[index] = match.Item
 	}
 	return items
+}
+
+func itemAsset(assets []core.AssetAttachment, role string) *core.AssetAttachment {
+	for index := range assets {
+		if assets[index].Role == role {
+			return &assets[index]
+		}
+	}
+	return nil
 }
 
 func feedNames(feeds []core.Feed) map[string]string {

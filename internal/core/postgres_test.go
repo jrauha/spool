@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -73,6 +74,7 @@ func TestPostgresStoreItems(t *testing.T) {
 		FeedID:      feed.ID,
 		GUID:        "item-1",
 		URL:         "https://example.com/items/1",
+		ImageURL:    "https://example.com/items/1/image.png",
 		Title:       "First item",
 		Summary:     "Original summary",
 		PublishedAt: &publishedAt,
@@ -83,13 +85,28 @@ func TestPostgresStoreItems(t *testing.T) {
 	if !created {
 		t.Fatal("item was not created")
 	}
+	asset := Asset{
+		ID:        "12345678-1234-1234-1234-123456789abc",
+		MediaType: "image/png",
+		ByteSize:  128,
+		SHA256:    strings.Repeat("a", 64),
+	}
+	inputs := ItemImageInputs{PageURL: item.URL, ImageURL: item.ImageURL}
+	if _, updated, err := store.ReplaceItemAssetIfInputsMatch(ctx, item.ID, inputs, ItemAssetRoleThumbnail, &asset); err != nil || !updated {
+		t.Fatalf("ReplaceItemAssetIfInputsMatch returned (%v, %v), want updated", updated, err)
+	}
+	staleInputs := ItemImageInputs{PageURL: "https://example.com/stale", ImageURL: item.ImageURL}
+	if _, updated, err := store.ReplaceItemAssetIfInputsMatch(ctx, item.ID, staleInputs, ItemAssetRoleThumbnail, &Asset{ID: "fedcba98-7654-3210-fedc-ba9876543210"}); err != nil || updated {
+		t.Fatalf("ReplaceItemAssetIfInputsMatch accepted stale inputs: updated=%v, err=%v", updated, err)
+	}
 
 	item, created, err = store.UpsertItem(ctx, Item{
-		FeedID:  feed.ID,
-		GUID:    "item-1",
-		URL:     "https://example.com/items/1",
-		Title:   "First item",
-		Summary: "Updated summary",
+		FeedID:   feed.ID,
+		GUID:     "item-1",
+		URL:      "https://example.com/items/1",
+		ImageURL: "https://example.com/items/1/image.png",
+		Title:    "First item",
+		Summary:  "Updated summary",
 	})
 	if err != nil {
 		t.Fatalf("UpsertItem update returned error: %v", err)
@@ -97,16 +114,60 @@ func TestPostgresStoreItems(t *testing.T) {
 	if created {
 		t.Fatal("existing item was reported as created")
 	}
-	if item.Summary != "Updated summary" {
-		t.Fatalf("summary = %q, want updated summary", item.Summary)
+	if item.Summary != "Updated summary" || item.ImageURL != "https://example.com/items/1/image.png" {
+		t.Fatalf("item after upsert = %#v", item)
 	}
 
 	found, err := store.FindItem(ctx, item.ID)
 	if err != nil {
 		t.Fatalf("FindItem returned error: %v", err)
 	}
-	if found.ID != item.ID || found.Summary != item.Summary {
+	if found.ID != item.ID || found.Summary != item.Summary || found.ImageURL != item.ImageURL {
 		t.Fatalf("found item = %#v, want %#v", found, item)
+	}
+	userID := testUserID(t, database, ctx)
+	if err := store.CreateSubscription(ctx, userID, feed.ID); err != nil {
+		t.Fatalf("CreateSubscription returned error: %v", err)
+	}
+	matches, err := store.QueryItemsForUser(ctx, userID, ItemQuery{Sort: ItemQuerySortNewest, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryItemsForUser returned error: %v", err)
+	}
+	if len(matches) != 1 || len(matches[0].Assets) != 1 || matches[0].Assets[0].AssetID != asset.ID || matches[0].Assets[0].Role != ItemAssetRoleThumbnail {
+		t.Fatalf("item assets = %#v", matches)
+	}
+	foundAsset, err := store.FindAssetForUser(ctx, userID, asset.ID)
+	if err != nil || foundAsset.MediaType != "image/png" {
+		t.Fatalf("FindAssetForUser = (%#v, %v)", foundAsset, err)
+	}
+	var otherUserID string
+	if err := database.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id::text
+	`, "other-reader@example.com", "hash").Scan(&otherUserID); err != nil {
+		t.Fatalf("insert other user: %v", err)
+	}
+	if _, err := store.FindAssetForUser(ctx, otherUserID, asset.ID); err != ErrAssetNotFound {
+		t.Fatalf("FindAssetForUser for unsubscribed user returned %v, want ErrAssetNotFound", err)
+	}
+	item.ImageURL = "https://example.com/items/1/new-image.png"
+	item, _, err = store.UpsertItem(ctx, item)
+	if err != nil || item.ImageURL != "https://example.com/items/1/new-image.png" {
+		t.Fatalf("image source update = %#v, err=%v", item, err)
+	}
+	if _, updated, err := store.ReplaceItemAssetIfInputsMatch(ctx, item.ID, inputs, ItemAssetRoleThumbnail, nil); err != nil || updated {
+		t.Fatalf("stale attachment removal returned (%v, %v), want no update", updated, err)
+	}
+	item.URL = ""
+	item.ImageURL = ""
+	if _, _, err := store.UpsertItem(ctx, item); err != nil {
+		t.Fatalf("clear image inputs: %v", err)
+	}
+	var attachmentCount int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM item_assets WHERE item_id = $1`, item.ID).Scan(&attachmentCount); err != nil {
+		t.Fatalf("count cleared attachments: %v", err)
+	}
+	if attachmentCount != 0 {
+		t.Fatalf("clearing image inputs left %d attachments", attachmentCount)
 	}
 
 	oversized := []struct {
@@ -117,12 +178,69 @@ func TestPostgresStoreItems(t *testing.T) {
 		{name: "author", item: Item{GUID: "long-author", Title: "Item", Author: strings.Repeat("a", MaxItemAuthorChars+1)}},
 		{name: "summary", item: Item{GUID: "long-summary", Title: "Item", Summary: strings.Repeat("s", MaxItemSummaryChars+1)}},
 		{name: "URL", item: Item{GUID: "long-url", Title: "Item", URL: strings.Repeat("u", MaxItemURLChars+1)}},
+		{name: "image URL", item: Item{GUID: "long-image-url", Title: "Item", ImageURL: strings.Repeat("u", MaxItemURLChars+1)}},
 	}
 	for _, test := range oversized {
 		test.item.FeedID = feed.ID
 		if _, _, err := store.UpsertItem(ctx, test.item); err == nil {
 			t.Errorf("UpsertItem accepted oversized %s", test.name)
 		}
+	}
+}
+
+func TestPostgresStoreUpsertHookIsTransactionalAndTracksImageInputs(t *testing.T) {
+	database := openTestDB(t)
+	store := NewPostgresStore(database)
+	ctx := context.Background()
+	feed := testFeed(t, store, ctx)
+	item := Item{
+		FeedID:   feed.ID,
+		GUID:     "transactional-image",
+		URL:      "https://example.com/item",
+		ImageURL: "https://example.com/image.png",
+		Title:    "Item",
+	}
+	calls := 0
+	hook := func(context.Context, *sql.Tx, Item) error {
+		calls++
+		return nil
+	}
+	if _, _, err := store.UpsertItemWithHook(ctx, item, hook); err != nil {
+		t.Fatalf("first UpsertItemWithHook returned error: %v", err)
+	}
+	item.Summary = "Updated summary"
+	if _, _, err := store.UpsertItemWithHook(ctx, item, hook); err != nil {
+		t.Fatalf("summary UpsertItemWithHook returned error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("hook called %d times after summary-only update, want 1", calls)
+	}
+	item.ImageURL = "https://example.com/new-image.png"
+	if _, _, err := store.UpsertItemWithHook(ctx, item, hook); err != nil {
+		t.Fatalf("image URL UpsertItemWithHook returned error: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("hook called %d times after image URL change, want 2", calls)
+	}
+
+	rollbackItem := Item{
+		FeedID: feed.ID,
+		GUID:   "rollback-item",
+		URL:    "https://example.com/rollback",
+		Title:  "Rollback",
+	}
+	hookErr := errors.New("job insert failed")
+	if _, _, err := store.UpsertItemWithHook(ctx, rollbackItem, func(context.Context, *sql.Tx, Item) error {
+		return hookErr
+	}); err != hookErr {
+		t.Fatalf("failed enqueue hook returned %v, want %v", err, hookErr)
+	}
+	var count int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM items WHERE feed_id = $1 AND guid = $2`, feed.ID, rollbackItem.GUID).Scan(&count); err != nil {
+		t.Fatalf("count rolled back item: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("failed enqueue left %d item rows, want 0", count)
 	}
 }
 
@@ -417,7 +535,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if err := dbkit.Migrate(ctx, database); err != nil {
 		t.Fatalf("Migrate returned error: %v", err)
 	}
-	if _, err := database.ExecContext(ctx, `TRUNCATE events, items, feeds, sessions, users RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := database.ExecContext(ctx, `TRUNCATE item_assets, assets, events, items, feeds, sessions, users RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
 	return database

@@ -1,0 +1,27 @@
+{
+  "apiVersion": "1",
+  "deliveryId": "delivery-1",
+  "plugin": {
+    "name": "item-images",
+    "version": "0.1.0",
+    "dataDir": "/var/lib/spool/plugin-data/item-images"
+  },
+  "event": {
+    "name": "item.image_inputs_changed",
+    "timestamp": "2026-09-12T12:00:00Z",
+    "feed": {
+      "id": "feed-id",
+      "url": "https://example.com/feed.xml",
+      "title": "Example",
+      "siteUrl": "https://example.com/"
+    },
+    "item": {
+      "id": "item-id",
+      "feedId": "feed-id",
+      "url": "https://example.com/post",
+      "imageUrl": "https://example.com/image.jpg",
+      "title": "Example post",
+      "summary": "Example summary"
+    }
+  }
+}

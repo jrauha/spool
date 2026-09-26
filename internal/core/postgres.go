@@ -260,26 +260,60 @@ func (s *PostgresStore) ListFeedsDueRefresh(ctx context.Context, interval time.D
 	return feeds, rows.Err()
 }
 
+type ItemUpsertHook func(context.Context, *sql.Tx, Item) error
+
 func (s *PostgresStore) UpsertItem(ctx context.Context, item Item) (Item, bool, error) {
+	return s.UpsertItemWithHook(ctx, item, nil)
+}
+
+// UpsertItemWithHook runs hook in the item upsert transaction when the page or
+// feed image URL is new or changed.
+func (s *PostgresStore) UpsertItemWithHook(ctx context.Context, item Item, hook ItemUpsertHook) (Item, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Item{}, false, err
+	}
+	defer tx.Rollback()
+
+	identity := item.GUID
+	if identity == "" {
+		identity = item.URL
+	}
+	if identity == "" {
+		identity = item.Title
+	}
+	var previousURL, previousImageURL string
+	err = tx.QueryRowContext(ctx, `
+		SELECT url, image_url FROM items
+		WHERE feed_id = $1 AND identity_key = $2
+		FOR UPDATE
+	`, item.FeedID, identity).Scan(&previousURL, &previousImageURL)
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Item{}, false, err
+	}
+
 	var created bool
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO items (feed_id, guid, url, title, summary, author, published_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO items (feed_id, guid, url, image_url, title, summary, author, published_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (feed_id, identity_key) DO UPDATE SET
 			guid = EXCLUDED.guid,
 			url = EXCLUDED.url,
+			image_url = EXCLUDED.image_url,
 			title = EXCLUDED.title,
 			summary = EXCLUDED.summary,
 			author = EXCLUDED.author,
 			published_at = EXCLUDED.published_at,
 			updated_at = now()
-		RETURNING id::text, feed_id::text, guid, url, title, summary, author,
+		RETURNING id::text, feed_id::text, guid, url, image_url, title, summary, author,
 			published_at, created_at, updated_at, xmax = 0
-	`, item.FeedID, item.GUID, item.URL, item.Title, item.Summary, item.Author, item.PublishedAt).Scan(
+	`, item.FeedID, item.GUID, item.URL, item.ImageURL, item.Title, item.Summary, item.Author, item.PublishedAt).Scan(
 		&item.ID,
 		&item.FeedID,
 		&item.GUID,
 		&item.URL,
+		&item.ImageURL,
 		&item.Title,
 		&item.Summary,
 		&item.Author,
@@ -288,12 +322,31 @@ func (s *PostgresStore) UpsertItem(ctx context.Context, item Item) (Item, bool, 
 		&item.UpdatedAt,
 		&created,
 	)
-	return item, created, err
+	if err != nil {
+		return Item{}, false, err
+	}
+
+	imageInputsChanged := !found || previousURL != item.URL || previousImageURL != item.ImageURL
+	if imageInputsChanged && item.URL == "" && item.ImageURL == "" {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM item_assets WHERE item_id = $1 AND role = $2
+		`, item.ID, ItemAssetRoleThumbnail); err != nil {
+			return Item{}, false, err
+		}
+	} else if hook != nil && imageInputsChanged {
+		if err := hook(ctx, tx, item); err != nil {
+			return Item{}, false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Item{}, false, err
+	}
+	return item, created, nil
 }
 
 func (s *PostgresStore) FindItem(ctx context.Context, id string) (Item, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id::text, feed_id::text, guid, url, title, summary, author,
+		SELECT id::text, feed_id::text, guid, url, image_url, title, summary, author,
 			published_at, created_at, updated_at
 		FROM items
 		WHERE id = $1
@@ -481,6 +534,7 @@ func scanItem(row feedScanner) (Item, error) {
 		&item.FeedID,
 		&item.GUID,
 		&item.URL,
+		&item.ImageURL,
 		&item.Title,
 		&item.Summary,
 		&item.Author,

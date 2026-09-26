@@ -20,6 +20,8 @@
   --space-5: 1.5rem;
   --space-6: 2rem;
   --summary-lines: 3;
+  --item-thumbnail-width: 10rem;
+  --item-thumbnail-mobile-width: 6rem;
   --title-prefix-gap: 1ch;
 }
 
@@ -62,6 +64,9 @@ a:hover { text-decoration: underline; }
 .unread-count { color: var(--color-focus); }
 .item-row--read .item-title { color: var(--color-muted); font-weight: 400; }
 .item-title, .feed-title { font-weight: 700; }
+.item-content__text { min-width: 0; }
+.item-content--with-thumbnail { display: grid; grid-template-columns: minmax(0, 1fr) var(--item-thumbnail-width); gap: var(--space-4); align-items: start; }
+.item-thumbnail { display: block; width: 100%; max-height: 8rem; aspect-ratio: 16 / 10; object-fit: cover; }
 .item-summary, .feed-description { margin-top: var(--space-1); color: var(--color-muted); font-size: 0.75rem; }
 .item-summary { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: var(--summary-lines); line-clamp: var(--summary-lines); }
 .item-summary img, .feed-description img { display: block; max-width: 100%; height: auto; }
@@ -106,4 +111,6 @@ button:hover { border-color: var(--color-link); color: var(--color-ink); }
   .feed-sidebar { display: none; }
   .account { display: none; }
   .feed-heading, .feed-row, .add-feed div, .item-query div { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+  .item-content--with-thumbnail { grid-template-columns: minmax(0, 1fr) var(--item-thumbnail-mobile-width); gap: var(--space-2); }
+  .item-thumbnail { max-height: 4rem; }
 }

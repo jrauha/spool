@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -73,7 +74,7 @@ func (s *PostgresStore) QueryItemsForUser(ctx context.Context, userID string, qu
 
 	statement := fmt.Sprintf(`
 		WITH user_items AS (
-			SELECT items.id, items.feed_id, items.guid, items.url, items.title,
+			SELECT items.id, items.feed_id, items.guid, items.url, items.image_url, items.title,
 				items.summary, items.author, items.published_at,
 				CASE
 					WHEN read_override.is_read THEN read_override.read_at
@@ -95,10 +96,20 @@ func (s *PostgresStore) QueryItemsForUser(ctx context.Context, userID string, qu
 			FROM user_items
 			WHERE %s
 		)
-		SELECT id::text, feed_id::text, guid, url, title, summary, author,
+		SELECT id::text, feed_id::text, guid, url, image_url, title, summary, author,
 			published_at, read_at, created_at, updated_at, feed_title, sort_at,
-			search_rank
+			search_rank, item_assets.attachments
 		FROM matched_items
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(json_agg(json_build_object(
+				'assetId', item_assets.asset_id::text,
+				'role', item_assets.role,
+				'mediaType', assets.media_type
+			) ORDER BY item_assets.role), '[]'::json) AS attachments
+			FROM item_assets
+			JOIN assets ON assets.id = item_assets.asset_id
+			WHERE item_assets.item_id = matched_items.id
+		) AS item_assets ON true
 		WHERE %s
 		ORDER BY %s
 		LIMIT %s
@@ -113,11 +124,13 @@ func (s *PostgresStore) QueryItemsForUser(ctx context.Context, userID string, qu
 	matches := make([]ItemMatch, 0, query.Limit)
 	for rows.Next() {
 		var match ItemMatch
+		var attachments []byte
 		if err := rows.Scan(
 			&match.ID,
 			&match.FeedID,
 			&match.GUID,
 			&match.URL,
+			&match.ImageURL,
 			&match.Title,
 			&match.Summary,
 			&match.Author,
@@ -128,8 +141,12 @@ func (s *PostgresStore) QueryItemsForUser(ctx context.Context, userID string, qu
 			&match.FeedTitle,
 			&match.SortAt,
 			&match.Rank,
+			&attachments,
 		); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(attachments, &match.Assets); err != nil {
+			return nil, fmt.Errorf("decode item assets: %w", err)
 		}
 		matches = append(matches, match)
 	}
